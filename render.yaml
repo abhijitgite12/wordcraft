@@ -1,13 +1,14 @@
-# Render free web service (native Node — no Dockerfile).
-# Deploys the committed read-only data/sat.duckdb; the app runs fully read-only
-# against it. Learner progress lives in browser localStorage, not the server disk.
+# Render free web service using the same Docker image as local development.
+# Deploys the committed read-only data/sat.duckdb; learner progress lives in
+# browser localStorage, not the server disk.
 services:
   - type: web
     name: wordcraft
-    runtime: node
+    runtime: docker
     plan: free
-    buildCommand: "npm install"
-    startCommand: "node server.js"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
     healthCheckPath: /login
     envVars:
       - key: APP_PASSWORD

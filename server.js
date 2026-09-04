@@ -51,7 +51,7 @@ function loginPage(){
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Word Craft</title><style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:linear-gradient(135deg,#e6e1ff,#d9f3e5);height:100vh;display:grid;place-items:center;margin:0}.box{background:#fff;padding:38px 32px;border-radius:20px;box-shadow:0 20px 60px #30266b22;width:min(90vw,360px);text-align:center}.logo{width:52px;height:52px;border-radius:15px;background:#6555d8;color:#fff;display:grid;place-items:center;font-size:26px;margin:0 auto 12px}.box h1{font:700 24px Georgia,serif;margin:0 0 5px;color:#242332}.box p{color:#77758a;font-size:13px;margin:0 0 22px}input{width:100%;box-sizing:border-box;padding:14px;border:1px solid #e5e1f5;border-radius:12px;font-size:15px;outline-color:#6555d8;margin-bottom:12px}button{width:100%;padding:14px;border:0;border-radius:12px;background:#6555d8;color:#fff;font-weight:600;font-size:15px;cursor:pointer}.err{color:#e05245;font-size:12px;min-height:16px;margin-top:9px}</style></head><body><div class="box"><div class="logo">✦</div><h1>Word Craft</h1><p>A private study space. Enter the password.</p><form id="f"><input type="password" id="p" placeholder="Password" autocomplete="current-password" autofocus><button>Unlock</button></form><div class="err" id="err"></div></div><script src="/login.js"></script></body></html>`;
 }
 
-// Persist enriched fields (example, synonyms, antonyms) back to DuckDB + words.json
+// Persist enriched fields (including AI-cleaned definitions) back to DuckDB + words.json
 // so AI-generated content is reused instantly instead of being regenerated.
 // NOTE: gated behind ALLOW_RW=1. On ephemeral free hosts (Render free) the disk is
 // lost every redeploy/spin-down, so we default to read-only and keep only the
@@ -62,6 +62,7 @@ function persistEnrich(word, enrich) {
   // Only disk writes are disabled on ephemeral/read-only deployments.
   const w = words.find(x => x.word === word);
   if (!w) return;
+  if (enrich.aiDefinition) w.aiDefinition = enrich.aiDefinition;
   if (enrich.example) w.example = enrich.example;
   if (enrich.synonyms) w.synonyms = enrich.synonyms;
   if (enrich.antonyms) w.antonyms = enrich.antonyms;
@@ -121,6 +122,40 @@ function send(res, status, data, type='application/json') {
   res.end(type === 'application/json' ? JSON.stringify(data) : data);
 }
 function clean(text) { return String(text || '').replace(/[<>]/g, '').slice(0, 500); }
+async function aiDefinition(body) {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const word = clean(body.word), source = clean(body.definition);
+  if (!word || !source) throw new Error('A word and definition are required');
+  const prompt = `Rewrite the dictionary definition of the vocabulary word “${word}” for a learner.
+
+SOURCE DEFINITION (use this as a factual hint, but do not copy its awkward wording): “${source}”
+
+Return valid JSON ONLY: {"definition":"..."}
+Rules:
+- Give the clearest modern meaning for the exact sense in the source.
+- One short sentence, ideally 6–16 words.
+- Never include the target word itself or a close derivative in the definition.
+- Remove part-of-speech labels, dictionary abbreviations, control characters, etymology, examples, and cross-references.
+- Do not add a second sense or information not supported by the source.
+- Prefer concrete plain English. For “outset”, output something like “The beginning of something.”, not “At (or from) the outset from the beginning.”`;
+  let last;
+  for (const model of models) {
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
+        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:100})
+      });
+      const j=await r.json();
+      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      let text=(j.choices?.[0]?.message?.content||'').replace(/^```json\\s*/,'').replace(/```\\s*$/,'').trim();
+      const parsed=JSON.parse(text), definition=String(parsed.definition||'').replace(/[\\x00-\\x1f]/g,' ').trim();
+      if(!definition) throw new Error('AI returned an empty definition');
+      persistEnrich(word,{aiDefinition:definition});
+      return {definition,cached:false,model};
+    } catch(e){last=e;}
+  }
+  throw last||new Error('No free model responded');
+}
 async function genie(body) {
   if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
   const word = clean(body.word), definition = clean(body.definition), mode = clean(body.mode || 'learn');
@@ -132,8 +167,9 @@ THE LEARNER'S REQUEST/QUESTION (must be answered FIRST and directly, even if a c
 Rules:
 1. If the request is a specific question (e.g. “How is X the opposite of voracious?”), lead by answering THAT exact question clearly and directly, and honestly flag if the premise is inaccurate rather than silently agreeing.
 2. Then provide the remaining fields.
-Return valid JSON ONLY with exactly these string keys: explanation, example, memoryHook, deeperQuestion, contextNote, synonyms, antonyms.
-- 'explanation': begins by directly answering the request; also distinguishes the word from a related term if relevant.
+Return valid JSON ONLY with exactly these keys: directAnswer, explanation, example, memoryHook, deeperQuestion, contextNote, synonyms, antonyms.
+- 'directAnswer': a concise 1-3 sentence answer to the learner's exact request. It must be different in substance depending on the request: explain means plain English; memory means a memorable hook; near-syn means a direct contrast; test me means a mini-question or two; in the wild means useful context.
+- 'explanation': supporting teaching content after the direct answer; distinguish the word from a related term if relevant.
 - 'synonyms' and 'antonyms': arrays of 2-4 SHORT strings. Antonyms must be TRUE opposites of this exact word (e.g. voracious → sated/satisfied, NOT indifferent). If a true antonym is not sensible use an empty array.
 - 'example': vivid original sentence.
 - 'contextNote': if mentioning a book, label as an example of usage, never claim the exact word appears there; do not invent quotations.`;
@@ -207,6 +243,17 @@ const server=http.createServer((req,res)=>{
   if (req.method==='POST' && route==='/api/search') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>2000) req.destroy();});
     req.on('end',async()=>{try{const {q=''}=JSON.parse(raw||'{}');send(res,200,{results:await searchDb(String(q).slice(0,60))})}catch(e){send(res,500,{error:e.message})}}); return;
+  }
+  if (req.method==='POST' && route==='/api/definition') {
+    if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
+    if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
+    req.on('end',async()=>{try{
+      const {word=''}=JSON.parse(raw||'{}'), w=words.find(x=>x.word===String(word).toLowerCase());
+      if(!w)return send(res,404,{error:'word not found'});
+      if(w.aiDefinition)return send(res,200,{definition:w.aiDefinition,cached:true});
+      send(res,200,await aiDefinition({word:w.word,definition:w.definition}));
+    }catch(e){send(res,500,{error:e.message})}}); return;
   }
   if (req.method==='POST' && route==='/api/genie') {
     if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});

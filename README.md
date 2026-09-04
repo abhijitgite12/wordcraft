@@ -2,7 +2,7 @@
 
 An adaptive, swipe-based SAT/GRE vocabulary study app. 5,908 words with difficulty + category tags, DuckDB + Parquet-backed search, an OpenRouter-backed Deep Dive tutor, and per-browser progress.
 
-## Run locally (Docker — recommended)
+## Run locally (Docker — same image used by Render)
 
 ```bash
 cd ~/dev/src/satvocab
@@ -21,7 +21,7 @@ node server.js
 
 ## Deploy to Render (free)
 
-The repo includes `render.yaml` (native Node runtime — no Docker wrapper on Render).
+Render uses the committed `Dockerfile` via `render.yaml`, so local Docker and production use the same Node 22 image, dependency installation, filesystem layout, and start command.
 
 1. Push this folder to a GitHub repo.
 2. On [render.com](https://render.com) → **New → Web Service** → connect the repo.
