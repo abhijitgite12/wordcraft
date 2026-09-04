@@ -3,9 +3,12 @@
 Last updated: 2026-09-04
 Repository: `https://github.com/abhijitgite12/wordcraft`
 Local project: `/home/abhijitgite/dev/src/satvocab`
-Render service: `wordcraft`
-Render service ID: `srv-dadfa967bikc73bvnup0`
-Live URL: `https://wordcraft-6tuz.onrender.com`
+Original Render service: `wordcraft`
+Original service ID: `srv-dadfa967bikc73bvnup0`
+Original URL: `https://wordcraft-6tuz.onrender.com`
+Docker migration service: `wordcraft-docker`
+Docker service ID: `srv-dadka58n74is73adu990`
+Docker URL: `https://wordcraft-docker.onrender.com`
 Git branch: `master`
 
 ## Current deployment model
@@ -53,7 +56,7 @@ Check service configuration:
 render services --output json
 ```
 
-Important: Render treats the runtime as immutable for an existing service. `render services update --runtime docker` is rejected with `cannot switch runtimes via the CLI`; the API update also does not change the existing runtime. The current service must be replaced or a new Docker service must be created.
+Important: Render treats the runtime as immutable for an existing service. `render services update --runtime docker` is rejected with `cannot switch runtimes via the CLI`; the API update also does not change the existing runtime. A parallel Docker service was created successfully: `wordcraft-docker` (`srv-dadka58n74is73adu990`). Its environment variables were transferred securely and its deployment is live.
 
 Safest migration: create a parallel Docker service, verify it, confirm its environment variables, then switch users to its URL before deleting the old Node service:
 
@@ -70,7 +73,7 @@ render services create \
   --output json
 ```
 
-Do not delete the original service until the Docker service is healthy and `APP_PASSWORD`, `OPENROUTER_API_KEY`, and `SESSION_SECRET` are confirmed.
+Do not delete the original Node service until the Docker URL has been accepted as the replacement. The Docker service has been verified: `/login`, `/style.css`, and `/app.js` all return HTTP 200. Required environment variables were transferred: `APP_PASSWORD`, `OPENROUTER_API_KEY`, `SESSION_SECRET`, and `ALLOW_RW`.
 
 Deploy an exact Git commit and wait for Render's result on a service:
 
