@@ -1,0 +1,18 @@
+# Render free web service (native Node — no Dockerfile).
+# Deploys the committed read-only data/sat.duckdb; the app runs fully read-only
+# against it. Learner progress lives in browser localStorage, not the server disk.
+services:
+  - type: web
+    name: wordcraft
+    runtime: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    healthCheckPath: /login
+    envVars:
+      - key: APP_PASSWORD
+        sync: false            # set in Render dashboard, never in the repo
+      - key: OPENROUTER_API_KEY
+        sync: false            # set in Render dashboard, never in the repo
+      - key: ALLOW_RW
+        value: "0"             # read-only; AI examples cached in-memory + browser localStorage

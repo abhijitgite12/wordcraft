@@ -1,0 +1,12 @@
+services:
+  wordcraft:
+    build: .
+    ports:
+      - "4173:4173"
+    environment:
+      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in your shell or .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in your shell or .env}
+      ALLOW_RW: "0"
+      PORT: "4173"
+    restart: unless-stopped
