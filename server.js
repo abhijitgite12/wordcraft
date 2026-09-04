@@ -168,14 +168,16 @@ function loginJs(build){
   return `document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const p=document.getElementById('p').value;const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p})});document.getElementById('p').value='';if(r.ok){location.href='/'}else{document.getElementById('err').textContent=r.status===429?'Too many attempts. Try later.':'Wrong password.'}});`;
 }
 function guard(req,res){
-  if (req.url==='/login') return send(res,200,loginPage(),'text/html');
-  if (req.url==='/login.js') return send(res,200,loginJs(),'text/javascript');
+  const route = req.url.split('?')[0];
+  if (route==='/login') return send(res,200,loginPage(),'text/html');
+  if (route==='/login.js') return send(res,200,loginJs(),'text/javascript');
   return false;
 }
 const server=http.createServer((req,res)=>{
   const ip = req.socket.remoteAddress || 'x';
+  const route = req.url.split('?')[0];
   // Login route (not gated)
-  if (req.method==='POST' && req.url==='/api/login'){
+  if (req.method==='POST' && route==='/api/login'){
     if (!passwordIsActive()) return send(res,200,{ok:true,session:(()=>{const t=issueSession();res.setHeader('Set-Cookie',cookieHeader(t));return t})()});
     let raw=''; req.on('data',c=>{raw+=c;if(raw.length>4000)req.destroy();});
     req.on('end',()=>{
@@ -188,32 +190,32 @@ const server=http.createServer((req,res)=>{
   }
   // Public asset/login + logout
   if (req.method==='GET'){
-    if (req.url==='/login') return send(res,200,loginPage(),'text/html');
-    if (req.url==='/login.js') return send(res,200,loginJs(),'text/javascript');
-    if (req.url==='/logout'){ res.setHeader('Set-Cookie','sat_session=; Max-Age=0; Path=/'); return send(res,200,{ok:true}); }
+    if (route==='/login') return send(res,200,loginPage(),'text/html');
+    if (route==='/login.js') return send(res,200,loginJs(),'text/javascript');
+    if (route==='/logout'){ res.setHeader('Set-Cookie','sat_session=; Max-Age=0; Path=/'); return send(res,200,{ok:true}); }
   }
   // Everything else requires auth
   if (!isAuthed(req)){
     if (req.method==='GET'){
       // allow the login page's own assets
-      if (req.url==='/login'||req.url==='/login.js'||req.url==='/style.css'||req.url==='/app.js') return guard(req,res);
+      if (route==='/login'||route==='/login.js'||route==='/style.css'||route==='/app.js') return guard(req,res);
       res.statusCode=302; res.setHeader('Location','/login'); res.end(); return;
     }
     return send(res,401,{error:'unauthorized'});
   }
-  if (req.method==='GET' && req.url==='/api/words') return send(res,200,{words});
-  if (req.method==='POST' && req.url==='/api/search') {
+  if (req.method==='GET' && route==='/api/words') return send(res,200,{words});
+  if (req.method==='POST' && route==='/api/search') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>2000) req.destroy();});
     req.on('end',async()=>{try{const {q=''}=JSON.parse(raw||'{}');send(res,200,{results:await searchDb(String(q).slice(0,60))})}catch(e){send(res,500,{error:e.message})}}); return;
   }
-  if (req.method==='POST' && req.url==='/api/genie') {
+  if (req.method==='POST' && route==='/api/genie') {
     if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
     if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>20000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await genie(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
   }
   // Fast cached example lookup: returns instantly when already generated, else generates + caches.
-  if (req.method==='POST' && req.url==='/api/example') {
+  if (req.method==='POST' && route==='/api/example') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>2000) req.destroy();});
     req.on('end',async()=>{
       try{
