@@ -3,9 +3,9 @@
 Last updated: 2026-09-04
 Repository: `https://github.com/abhijitgite12/wordcraft`
 Local project: `/home/abhijitgite/dev/src/satvocab`
-Original Render service: `wordcraft`
-Original service ID: `srv-dadfa967bikc73bvnup0`
-Original URL: `https://wordcraft-6tuz.onrender.com`
+Previous Render service: `wordcraft` (deleted after Docker migration)
+Previous service ID: `srv-dadfa967bikc73bvnup0`
+Previous URL: `https://wordcraft-6tuz.onrender.com` (retired)
 Docker migration service: `wordcraft-docker`
 Docker service ID: `srv-dadka58n74is73adu990`
 Docker URL: `https://wordcraft-docker.onrender.com`
@@ -73,7 +73,7 @@ render services create \
   --output json
 ```
 
-Do not delete the original Node service until the Docker URL has been accepted as the replacement. The Docker service has been verified: `/login`, `/style.css`, and `/app.js` all return HTTP 200. Required environment variables were transferred: `APP_PASSWORD`, `OPENROUTER_API_KEY`, `SESSION_SECRET`, and `ALLOW_RW`.
+The original Node service was deleted only after the Docker URL was verified. The Docker service has been verified: `/login`, `/style.css`, and `/app.js` all return HTTP 200. Required environment variables were transferred: `APP_PASSWORD`, `OPENROUTER_API_KEY`, `SESSION_SECRET`, and `ALLOW_RW`.
 
 Deploy an exact Git commit and wait for Render's result on a service:
 
