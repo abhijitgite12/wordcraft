@@ -207,6 +207,7 @@ function guard(req,res){
   const route = req.url.split('?')[0];
   if (route==='/login') return send(res,200,loginPage(),'text/html');
   if (route==='/login.js') return send(res,200,loginJs(),'text/javascript');
+  if (PUBLIC_PATHS[route]) return serve(req,res);
   return false;
 }
 const server=http.createServer((req,res)=>{
