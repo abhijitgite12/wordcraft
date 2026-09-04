@@ -14,5 +14,7 @@ services:
         sync: false            # set in Render dashboard, never in the repo
       - key: OPENROUTER_API_KEY
         sync: false            # set in Render dashboard, never in the repo
+      - key: SESSION_SECRET
+        generateValue: true      # Render generates and stores a strong secret
       - key: ALLOW_RW
         value: "0"             # read-only; AI examples cached in-memory + browser localStorage
