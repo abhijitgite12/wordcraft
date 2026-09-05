@@ -1,11 +1,12 @@
 # Word Craft deployment notes
 
-Last updated: 2026-09-04
+Last updated: 2026-09-06
 Repository: `https://github.com/abhijitgite12/wordcraft`
 Local project: `/home/abhijitgite/dev/src/satvocab`
 Previous Render service: `wordcraft` (deleted after Docker migration)
 Previous service ID: `srv-dadfa967bikc73bvnup0`
-Previous URL: `https://wordcraft-6tuz.onrender.com` (retired)
+Previous URL: `https://wordcraft-6tuz.onrender.com` (retired — returns 404; do not use)
+Current URL: `https://wordcraft-docker.onrender.com`
 Docker migration service: `wordcraft-docker`
 Docker service ID: `srv-dadka58n74is73adu990`
 Docker URL: `https://wordcraft-docker.onrender.com`
@@ -75,10 +76,33 @@ render services create \
 
 The original Node service was deleted only after the Docker URL was verified. The Docker service has been verified: `/login`, `/style.css`, and `/app.js` all return HTTP 200. Required environment variables were transferred: `APP_PASSWORD`, `OPENROUTER_API_KEY`, `SESSION_SECRET`, and `ALLOW_RW`.
 
-Deploy an exact Git commit and wait for Render's result on a service:
+## Passwords (two different values)
+
+- **Local Docker:** set in `.env` (`APP_PASSWORD`) — currently `wordcraft-local` (never commit the real value).
+- **Render production:** set in the Render dashboard env vars — differs from the local `.env` value.
+- `POST /api/login` returns `200` on success, `401` on bad password (rate-limited after repeated failures).
+- Note: `GET /login` may return a `401` status header while still serving the login page HTML in the body; check the body or use the POST check above.
+
+## Auto-deploy: push → Render (no scripts, no hooks)
+
+Deploy-on-push is Render's built-in GitHub integration — there is **no local git hook, no post-push script, and no GitHub Action**. Verified 2026-09-06:
+
+- No `.git/hooks/pre-push` / `post-push` (only default samples); `core.hooksPath` unset.
+- No `.github/workflows/` in the repo.
+
+The trigger is configured in two places:
+
+1. Repo: `render.yaml` → `autoDeploy: true`
+2. Render service (check with `render services --output json`): `autoDeploy = yes`, `autoDeployTrigger = commit`, `branch = master`, `repo = abhijitgite12/wordcraft`
+
+In the Render dashboard: **Settings → Build & Deploy** shows "Auto-Deploy: Yes, on every commit to master"; the **Deploys tab** shows each deploy's trigger (`github` = auto from push, `api` = manual CLI deploy).
+
+Quirk: a manual `render deploys create` for the same commit deduplicates the auto-deploy that the push also fires. Either way the commit goes live. To watch auto-deploy work on its own, push a trivial change and look for a `github`-triggered entry in the Deploys tab within seconds.
+
+Deploy an exact Git commit and wait for Render's result on the service:
 
 ```bash
-render deploys create srv-dadfa967bikc73bvnup0 \
+render deploys create srv-dadka58n74is73adu990 \
   --commit "$(git rev-parse HEAD)" \
   --wait \
   --confirm
@@ -87,18 +111,23 @@ render deploys create srv-dadfa967bikc73bvnup0 \
 If the service is already Docker but appears stuck:
 
 ```bash
-render restart srv-dadfa967bikc73bvnup0 --confirm
+render restart srv-dadka58n74is73adu990 --confirm
 ```
 
-After deployment, verify the public assets, not only `/login`:
+After deployment, verify the public assets, not only `/login` (use the CURRENT URL):
 
 ```bash
-curl -I --max-time 30 https://wordcraft-6tuz.onrender.com/login
-curl -I --max-time 30 'https://wordcraft-6tuz.onrender.com/style.css?v=deploycheck'
-curl -I --max-time 30 'https://wordcraft-6tuz.onrender.com/app.js?v=deploycheck'
+curl -I --max-time 30 https://wordcraft-docker.onrender.com/login
+curl -I --max-time 30 'https://wordcraft-docker.onrender.com/style.css?v=deploycheck'
+curl -I --max-time 30 'https://wordcraft-docker.onrender.com/app.js?v=deploycheck'
 ```
 
-Expected status is `200` for all three. A working `/login` with hanging CSS/JS usually means the old service/runtime is still serving or a deploy is unhealthy.
+Better: check the response *bodies* for the latest frontend feature (status codes alone can be misleading):
+
+```bash
+curl -s 'https://wordcraft-docker.onrender.com/style.css?v=deploycheck' | grep -o 'fs-row'   # font-size adjuster (2026-09-06)
+curl -s 'https://wordcraft-docker.onrender.com/app.js?v=deploycheck'  | grep -o 'applyFontSize'
+```
 
 ## Local Docker verification
 
@@ -121,6 +150,12 @@ git push origin master
 ```
 
 Never commit API keys, Render tokens, passwords, `.env`, or local AI burn progress files.
+
+## Recent changes (2026-09-06)
+
+- Text size adjuster added in the 🎨 theme menu (A− / A+, 85%–140% in 10% steps). Scales card typography via the `--fs` CSS variable; persisted per browser in localStorage key `wordCraftFont`. Commit `0778e2e`, verified live on Render.
+- Cache-bust versions when editing `public/` files: current are `style.css?v=wordcraft5` and `app.js?v=wordcraft4` (bump these on further changes so browsers pick up updates).
+- Theme-menu JS selects buttons via `.theme-menu [data-theme]` — new non-theme buttons added to the theme menu must either carry no `data-theme` or opt out of that selector.
 
 ## Current application changes
 
