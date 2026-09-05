@@ -191,6 +191,50 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
   }
   throw last || new Error('No free model responded');
 }
+// Map a free-form spoken utterance to one of the page's legal tools (intent classification).
+// Reuses the same free OpenRouter models + rate limiter as genie/definition.
+const INTENT_TOOLS = ['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','yes','no','mute','voice_on','stop','unknown'];
+async function classifyIntent(body) {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const word = clean(body.word), definition = clean(body.definition), screen = clean(body.screen);
+  const text = clean(body.text);
+  const tools = Array.isArray(body.tools) ? body.tools.filter(t=>INTENT_TOOLS.includes(t)) : [];
+  if (!text) throw new Error('An utterance is required');
+  const toolList = tools.length ? tools.join(', ') : INTENT_TOOLS.join(', ');
+  const prompt = `You route a learner's spoken utterance to ONE action in a vocabulary flashcard app.
+
+Current word: "${word}" (${screen})
+Definition: "${definition}"
+Allowed tools (return exactly one of these): ${toolList}
+
+Learner said: "${text}"
+
+Return valid JSON ONLY: {"tool":"...","option":null,"query":null,"confidence":0.0,"why":"..."}
+Rules:
+- tool must be one of the allowed tools. If none fits, use "unknown".
+- For answer_option, set option to 0-3 (A=0,B=1,C=2,D=3) when the learner indicates a choice ("b","second","that one"); else null.
+- For search or dd_ask, put the learner's query in "query".
+- For yes/no, tool is "yes" or "no".
+- "next" if they want to advance, "reveal" if they want the answer shown, "repeat" if they want it re-read.
+- confidence 0-1. why is one short phrase, not used by the app.`;
+  let last;
+  for (const model of models) {
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
+        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0,max_tokens:110})
+      });
+      const j=await r.json();
+      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      let textOut=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
+      const parsed=JSON.parse(textOut);
+      const tool = INTENT_TOOLS.includes(parsed.tool) ? parsed.tool : 'unknown';
+      return { tool, option: Number.isInteger(parsed.option)&&parsed.option>=0&&parsed.option<=3 ? parsed.option : null,
+        query: parsed.query ? String(parsed.query).slice(0,80) : null, confidence: Math.min(1,Math.max(0,Number(parsed.confidence)||0)), model };
+    } catch(e){ last=e; }
+  }
+  throw last||new Error('No free model responded');
+}
 function serve(req,res) {
   const pathname = req.url.split('?')[0];
   const file = pathname === '/' ? 'index.html' : pathname.replace(/^\//,'');
@@ -261,6 +305,12 @@ const server=http.createServer((req,res)=>{
     if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>20000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await genie(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
+  }
+  if (req.method==='POST' && route==='/api/intent') {
+    if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
+    if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
+    req.on('end',async()=>{try {send(res,200,await classifyIntent(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
   }
   // Fast cached example lookup: returns instantly when already generated, else generates + caches.
   if (req.method==='POST' && route==='/api/example') {

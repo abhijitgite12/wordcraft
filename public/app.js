@@ -2,6 +2,111 @@ window.addEventListener('error',e=>{const c=document.querySelector('#card');if(c
 let words, score=0, wrong={}, seen={}, craftWord=null, feed=[], fi=0, asked=null, curWord=null, mix='mixed', cat='all';
 const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shuffle=a=>[...a].sort(()=>Math.random()-.5);
+
+// ===== Voice layer: tool registry + local fast-path + speech =====
+const VOICE = { level: Number(localStorage.getItem('wordCraftVoice')||0), rate: Number(localStorage.getItem('wordCraftRate')||1), on: localStorage.getItem('wordCraftVoiceOn')!=='off' };
+let listening=false, voiceTimer=null;
+function speak(text,{rate=VOICE.rate,interrupt=true}={}){
+  if(!VOICE.on||!window.speechSynthesis||!text)return;
+  if(interrupt)window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(String(text));u.rate=rate;u.pitch=1;window.speechSynthesis.speak(u);
+}
+function stopSpeak(){if(window.speechSynthesis)window.speechSynthesis.cancel();}
+// Local, zero-network fast-path. Returns {tool,option,query} or null.
+function localFastpath(text){
+  const t=String(text||'').toLowerCase().trim(); if(!t)return null;
+  const has=w=>t.includes(w), any=arr=>arr.some(has);
+  if(any(['stop','cancel','quiet','shut up']))return {tool:'stop'};
+  if(any(['mute','voice off','turn off voice','silence']))return {tool:'mute'};
+  if(any(['unmute','voice on','turn on voice']))return {tool:'voice_on'};
+  if(any(['help','what can i','what do i','what can you','commands','options list']))return {tool:'help'};
+  if(any(['read options','read the options','what are the options','say the options']))return {tool:'options'};
+  if(any(['yes','yeah','yep','sure','ok','okay','fine','correct','right','that'])&&!has('no '))return {tool:'yes'};
+  if(any(['no','nope','nah','not yet','wait']))return {tool:'no'};
+  if(any(['next','go','continue','forward','let it slide','move on','advance','skip it']))return {tool:'next'};
+  if(any(['back','previous','go back','return','undo']))return {tool:'back'};
+  if(any(['skip','pass','dont know','dunno','dont want']))return {tool:'skip'};
+  if(any(['repeat','again','say it again','read again','what','pardon','slower','slow down','one more time','replay']))return {tool:'repeat'};
+  if(any(['reveal','show me','show it','show answer','give up','just tell me','i give up','what is it','let me see','show','tell me the answer','answer reveal','flip']))return {tool:'reveal'};
+  if(any(['deep dive','deep-dive','explain more','learn more','dive']))return {tool:'deep_dive'};
+  if(any(['review','review deck','missed words','my review']))return {tool:'review'};
+  if(any(['browse','word bank','search words','find a word']))return {tool:'browse'};
+  // option letters / ordinals
+  const m=t.match(/\b([abcd])\b/); if(m)return {tool:'answer_option',option:'abcd'.indexOf(m[1])};
+  const num=t.match(/\b([1-4])\b/); if(num)return {tool:'answer_option',option:Number(num[1])-1};
+  const ord={'first':0,'second':1,'third':2,'fourth':3}; for(const k in ord) if(t.includes(k))return {tool:'answer_option',option:ord[k]};
+  return null;
+}
+// Page toolset (legal actions) from current state.
+function currentTools(){
+  const c=cur(); const base=['next','back','skip','repeat','slow','fast','options','help','mute','voice_on','stop'];
+  if(!c||c.type==='empty')return ['next','back','repeat','help','mute','voice_on','stop'];
+  if(c.type==='test')return ['answer_option','answer_meaning','repeat','back','skip','options','help','mute','voice_on','stop'];
+  if(c.type==='relearn')return ['next','back','repeat','reveal','deep_dive','options','help','mute','voice_on','stop','yes','no'];
+  // teach
+  return [...base,'reveal','deep_dive'];
+}
+// Resolve an utterance to a tool: local first, then free-model intent.
+async function resolveIntent(text){
+  const local=localFastpath(text); if(local)return local;
+  const c=cur(), w=c?.word;
+  try{
+    const r=await fetch('/api/intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word:w?.word||'',definition:w?(w.aiDefinition||w.definition||''):'',screen:c?.type||'teach',tools:currentTools(),text})});
+    if(!r.ok)return null; const d=await r.json();
+    return {tool:d.tool==='unknown'?null:d.tool,option:d.option,query:d.query,confidence:d.confidence,model:d.model};
+  }catch(e){return null}
+}
+// Execute a resolved tool against the current page.
+async function runTool(tool,params={}){
+  if(!tool)return;
+  const c=cur(); const legal=currentTools(); if(!legal.includes(tool)){ speak("That's not available here. Say help to hear what you can do."); return; }
+  const w=c?.word;
+  switch(tool){
+    case 'next': move(1); break;
+    case 'back': move(-1); break;
+    case 'skip': move(1); break;
+    case 'repeat': speak(w?w.word+' — '+(w.aiDefinition||w.definition||''):''); break;
+    case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak('Slower');break;
+    case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak('Faster');break;
+    case 'reveal': showFlip(); break;
+    case 'deep_dive': if(w)openCraft(w); break;
+    case 'options': if(c?.type==='test'&&window.$$){speak('Read the options.');}else speak('You can say next, back, skip, reveal, or help.'); break;
+    case 'help': speak('You can say: '+legal.slice(0,8).join(', ')+', or help.'); break;
+    case 'review': showPage('review'); break;
+    case 'browse': showPage('browse'); break;
+    case 'mute': VOICE.on=false;localStorage.setItem('wordCraftVoiceOn','off');speak('Voice off');break;
+    case 'voice_on': VOICE.on=true;localStorage.setItem('wordCraftVoiceOn','on');speak('Voice on');break;
+    case 'stop': stopSpeak(); break;
+    case 'answer_option': if(c?.type==='test'&&typeof params.option==='number'){const o=$$('.option')[params.option];if(o&&!o.classList.contains('disabled'))o.click();}break;
+    case 'answer_meaning': speak("Say your answer, or pick an option."); break;
+    case 'yes': if(c?.type==='relearn'){delete wrong[w.word];persist();update();move(1);}break;
+    case 'no': speak('Keep it in review.'); break;
+    default: break;
+  }
+}
+async function handleUtterance(text){
+  if(!text)return;
+  const r=await resolveIntent(text); if(!r||!r.tool){ speak("I didn't catch that. Say help to hear what you can do."); return; }
+  await runTool(r.tool,r);
+}
+// Mic wrapper with graceful fallback to a text box.
+function startListening(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ speak("Voice isn't supported here. Use the buttons."); return; }
+  const rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.maxAlternatives=1;
+  rec.onstart=()=>{listening=true;const el=$('#voice-indicator');if(el)el.classList.add('active');};
+  rec.onresult=e=>{const t=e.results[0][0].transcript;handleUtterance(t);};
+  rec.onend=()=>{listening=false;const el=$('#voice-indicator');if(el)el.classList.remove('active');};
+  rec.onerror=()=>{listening=false;speak("Sorry, I didn't catch that.");};
+  rec.start();
+}
+// A tiny always-available text fallback for testing voice without a mic.
+function initVoiceUI(){
+  const btn=$('#voice-btn'); if(btn)btn.onclick=()=>{if(listening)return;startListening();};
+  const input=$('#voice-input'); const form=$('#voice-form');
+  if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
+}
+
 function levelOf(w){const d=w.difficulty||2;return d<=1?'Easy':d===2?'Medium':'Hard'}
 function persist(){try{localStorage.setItem('satSparkWrong',JSON.stringify(wrong));localStorage.setItem('satSparkSeen',JSON.stringify(seen));localStorage.setItem('satSparkScore',score);localStorage.setItem('satSparkMix',mix);localStorage.setItem('satSparkCat',cat);}catch(e){}}
 function weight(w){let m=wrong[w.word]||0;let mastered=seen[w.word]&&!m;if(m>0)return 1+m*3.5;if(mastered)return 0.35;return 1}
@@ -120,4 +225,4 @@ function fuzzyResults(q){const query=q.toLowerCase().trim(),tokens=query.split(/
 function dbSearch(q){const m=fuzzyResults(q);$('#word-list').innerHTML=m.map(w=>`<div class="word-row" data-w="${esc(w.word)}"><b>${esc(w.word)}</b>${catTag(w)}${lvlBadge(w)}<span>${esc(displayDef(w))}</span></div>`).join('')||'<p class="search-empty">No close matches yet — try a shorter clue.</p>'}
 function studyWord(x){if(!x)return;showPage('learn');feed=[{type:'teach',word:x},{type:'test',word:x}];fi=0;render()}
 $('#search').oninput=async e=>{let q=e.target.value.trim();if(q.length>=2)dbSearch(q);else renderList()};$('#word-list').onclick=e=>{let r=e.target.closest('[data-w]');if(r)studyWord(words.find(w=>w.word===r.dataset.w))};$('#review-list').onclick=e=>{let r=e.target.closest('[data-review]');if(r)studyWord(words.find(w=>w.word===r.dataset.review))};
-(async()=>{let r=await fetch('/api/words');words=(await r.json()).words;hydrateLocal();hydrateDefinitions();wrong=JSON.parse(localStorage.getItem('satSparkWrong')||'{}');seen=JSON.parse(localStorage.getItem('satSparkSeen')||'{}');score=+localStorage.getItem('satSparkScore')||0;mix=localStorage.getItem('satSparkMix')||'mixed';cat=localStorage.getItem('satSparkCat')||'all';document.body.dataset.theme=localStorage.getItem('satSparkTheme')||'sunrise';applyFontSize();if(musicWanted){$('#sound-button').textContent='🔊';$('#sound-button').classList.add('on')}$$('#mix-chips button').forEach(b=>b.classList.toggle('on',b.dataset.mix===mix));$$('#cat-chips button').forEach(b=>b.classList.toggle('on',b.dataset.cat===cat));const requested=new URLSearchParams(location.search).get('w');if(requested){const shared=words.find(w=>w.word.toLowerCase()===requested.toLowerCase());if(shared){feed=[{type:'teach',word:shared},{type:'test',word:shared}];fi=0}}ensureFeed();render();renderList()})().catch(e=>console.error(e));
+(async()=>{let r=await fetch('/api/words');words=(await r.json()).words;hydrateLocal();hydrateDefinitions();wrong=JSON.parse(localStorage.getItem('satSparkWrong')||'{}');seen=JSON.parse(localStorage.getItem('satSparkSeen')||'{}');score=+localStorage.getItem('satSparkScore')||0;mix=localStorage.getItem('satSparkMix')||'mixed';cat=localStorage.getItem('satSparkCat')||'all';document.body.dataset.theme=localStorage.getItem('satSparkTheme')||'sunrise';applyFontSize();if(musicWanted){$('#sound-button').textContent='🔊';$('#sound-button').classList.add('on')}$$('#mix-chips button').forEach(b=>b.classList.toggle('on',b.dataset.mix===mix));$$('#cat-chips button').forEach(b=>b.classList.toggle('on',b.dataset.cat===cat));const requested=new URLSearchParams(location.search).get('w');if(requested){const shared=words.find(w=>w.word.toLowerCase()===requested.toLowerCase());if(shared){feed=[{type:'teach',word:shared},{type:'test',word:shared}];fi=0}}ensureFeed();render();renderList();initVoiceUI()})().catch(e=>console.error(e));
