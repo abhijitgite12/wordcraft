@@ -6,11 +6,12 @@ An adaptive, swipe-based SAT/GRE vocabulary study app. 5,908 words with difficul
 
 ```bash
 cd ~/dev/src/satvocab
-export OPENROUTER_API_KEY="your-key"        # for Deep Dive (optional locally)
-export APP_PASSWORD="your-password"          # password gate
+cp .env.example .env   # then fill in APP_PASSWORD / SESSION_SECRET / OPENROUTER_API_KEY
 docker compose up --build
 # open http://localhost:4173
 ```
+
+`.env` is gitignored (never committed). `docker compose` reads it automatically, so local Docker and the Render Docker deploy use the same image, env vars, and start command.
 
 ### Run locally without Docker
 
