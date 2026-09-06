@@ -326,7 +326,8 @@ function initVoiceUI(){
   const toggle=()=>toggleMic(!VOICE.micOn);
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
-  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; vs.innerHTML=d&&d.voices?d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''):vs.innerHTML; vs.value=voiceSel; }).catch(()=>{}); vs.onchange=e=>{ localStorage.setItem('wordCraftVoiceSel',vs.value); voiceSel=vs.value; }; }
+  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; vs.innerHTML=(d&&d.voices?d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''):vs.innerHTML); vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
+ humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hello! This is the '+voiceSel.replace(/^en-US-/,'').replace(/Neural$/,'')+' voice.',{human:true,allowRepeat:true,force:true}); }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
   setVoiceState('off');
