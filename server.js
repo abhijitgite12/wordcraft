@@ -129,6 +129,27 @@ const models = [
   'google/gemma-4-26b-a4b-it',
   'qwen/qwen3.5-9b'
 ];
+const freeModels = [
+  'google/gemma-4-31b-it:free',
+  'minimax/minimax-m3:free',
+  'z-ai/glm-5.2:free'
+];
+const PAID_PROBE_MS = 60*60*1000;
+let paidDisabledUntil = 0;
+function isPaidModel(model){ return !model.endsWith(':free'); }
+function aiMode(){ return Date.now()<paidDisabledUntil ? 'free-fallback' : 'paid'; }
+function modelPool(){ return Date.now()<paidDisabledUntil ? freeModels : models; }
+function observeModelFailure(model,status,j){
+  const msg=String(j?.error?.message||'').toLowerCase();
+  const billing=status===402 || /insufficient|credits|balance|billing|payment|quota exceeded/.test(msg);
+  if(isPaidModel(model)&&billing){
+    paidDisabledUntil=Date.now()+PAID_PROBE_MS;
+    console.log(`[ai] paid credits unavailable; switching to free models for ${PAID_PROBE_MS/60000} minutes`);
+  }
+}
+function observeModelSuccess(model){
+  if(isPaidModel(model) && paidDisabledUntil){ paidDisabledUntil=0; console.log('[ai] paid model probe succeeded; returning to paid mode'); }
+}
 
 // Simple per-IP rate limiter for the AI endpoint so a public free host can't be abused.
 const RATE_WINDOW_MS = 60_000, RATE_MAX = 15; const hits = new Map();
@@ -193,14 +214,15 @@ Rules:
 - Do not add a second sense or information not supported by the source.
 - Prefer concrete plain English. For “outset”, output something like “The beginning of something.”, not “At (or from) the outset from the beginning.”`;
   let last;
-  for (const model of models) {
+  for (const model of modelPool()) {
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
         body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:100})
       });
       const j=await r.json();
-      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      observeModelSuccess(model);
       let text=(j.choices?.[0]?.message?.content||'').replace(/^```json\\s*/,'').replace(/```\\s*$/,'').trim();
       const parsed=JSON.parse(text), definition=String(parsed.definition||'').replace(/[\\x00-\\x1f]/g,' ').trim();
       if(!definition) throw new Error('AI returned an empty definition');
@@ -228,14 +250,15 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
 - 'example': vivid original sentence.
 - 'contextNote': if mentioning a book, label as an example of usage, never claim the exact word appears there; do not invent quotations.`;
   let last;
-  for (const model of models) {
+  for (const model of modelPool()) {
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: {'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:'+PORT, 'X-Title': 'Word Craft'},
         body: JSON.stringify({model, messages:[{role:'user',content:prompt}], temperature:0.65, max_tokens:700})
       });
       const j = await r.json();
-      if (!r.ok) { last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
+      if (!r.ok) { observeModelFailure(model,r.status,j); last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
+      observeModelSuccess(model);
       let text = j.choices?.[0]?.message?.content || '';
       text = text.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       const parsed = JSON.parse(text);
@@ -287,14 +310,15 @@ Rules:
 - "next" if they want to advance, "reveal" if they want the answer shown, "repeat" if they want it re-read.
 - confidence 0-1. why is one short phrase, not used by the app.`;
   let last;
-  for (const model of models) {
+  for (const model of modelPool()) {
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
         body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0,max_tokens:110})
       });
       const j=await r.json();
-      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      observeModelSuccess(model);
       let textOut=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       const parsed=JSON.parse(textOut);
       const tool = INTENT_TOOLS.includes(parsed.tool) ? parsed.tool : 'unknown';
@@ -350,14 +374,15 @@ USER JUST SAID: "${userText}"
 
 Return valid JSON ONLY with keys: action, index (number 0-3 or null), verdict (0/1/2 or null), query (string or null), narration (short spoken confirmation, 1 sentence), confidence (0-1). No text outside the JSON.`;
   let last;
-  for (const model of models) {
+  for (const model of modelPool()) {
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
         body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:150})
       });
       const j=await r.json();
-      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      observeModelSuccess(model);
       let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       const p=JSON.parse(str);
       const action = AGENT_ACTIONS.includes(p.action) && p.action!=='unknown' ? p.action : null;
@@ -422,10 +447,11 @@ Reply ONLY valid JSON:
  "done":<true if now wait for the learner, false if continue acting>}
 Do not add text outside the JSON. Do not repeat phrases you already used.`;
   let last;
-  for (const model of models) {
+  for (const model of modelPool()) {
     try {
       const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:180})});
-      const j=await r.json(); if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      const j=await r.json(); if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      observeModelSuccess(model);
       let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       const p=JSON.parse(str);
       const action=ORCH_ACTIONS.includes(p.action)?p.action:'none';
@@ -497,7 +523,7 @@ const server=http.createServer((req,res)=>{
     return send(res,401,{error:'unauthorized'});
   }
   if (req.method==='GET' && route==='/api/words') return send(res,200,{words});
-  if (req.method==='GET' && route==='/api/version') return send(res,200,BUILD);
+  if (req.method==='GET' && route==='/api/version') return send(res,200,{...BUILD,aiMode:aiMode(),paidDisabledUntil});
   // Client-side telemetry: the browser POSTs its loaded version, errors, and interactions so we can see real behavior.
   if (req.method==='POST' && route==='/api/log') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>20000) req.destroy();});
