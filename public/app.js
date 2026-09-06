@@ -426,10 +426,10 @@ function showAbout(){
   vpop.hidden=false; vbody.innerHTML='Loading…';
   fetch('/api/version').then(r=>r.ok?r.json():null).then(v=>{
     if(!v) throw 0;
-    const d=new Date(v.deployDate), now=new Date(v.started);
+    const d=new Date(v.released||v.deployDate||v.started), now=new Date(v.started);
     const fmt=(d)=>d.toLocaleString([],{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
     const short=(c)=>{c=c||'';return c&&c!=='dev'?(c.length>10?c.slice(0,7):c):(c||'dev');};
-    vbody.innerHTML=`<div class="vr">Commit <b>${esc(short(v.commit))}</b></div><div class="vr">Branch <b>${esc(v.branch||'—')}</b></div><div class="vr">Deployed <b>${esc(fmt(d))}</b></div><div class="vr">Server up <b>${esc(fmt(now))}</b></div>`;
+    vbody.innerHTML=`<div class="vr">Version <b>${esc(short(v.commit))}</b></div><div class="vr">Branch <b>${esc(v.branch||'—')}</b></div><div class="vr">Released <b>${esc(fmt(d))}</b></div><div class="vr">Server up <b>${esc(fmt(now))}</b></div>`;
   }).catch(()=>{vbody.textContent='No version info available.'});
 }
 function toggleAbout(){ if(vpop.hidden)showAbout(); vpop.hidden=!vpop.hidden; }

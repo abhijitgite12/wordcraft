@@ -8,17 +8,24 @@ const PORT = process.env.PORT || 4173;
 const ROOT = __dirname;
 // ---- build / deploy info (shown in the about badge) ----
 function buildInfo(){
-  // Prefer Render's injected env (set automatically on every deploy):
   const rCommit=process.env.RENDER_GIT_COMMIT, rBranch=process.env.RENDER_GIT_BRANCH;
-  const fallback={commit:process.env.BUILD_COMMIT||rCommit||'dev', branch:process.env.BUILD_BRANCH||rBranch||'', deployDate:process.env.RENDER_DEPLOY_DATE||new Date().toISOString(), started:Date.now()};
-  // honor explicit overrides, else git HEAD if available (local dev)
+  let commit=process.env.BUILD_COMMIT||rCommit||'', branch=process.env.BUILD_BRANCH||rBranch||'';
+  // 'released' = the moment this build was released/baked.
+  // Prefer Render's deploy date env if provided; else git commit timestamp; else server boot.
+  let released='';
+  if(process.env.RENDER_DEPLOY_DATE) released=process.env.RENDER_DEPLOY_DATE;
   try{
-    const g=require('child_process').execFileSync('git',['rev-parse','--short','HEAD'],{cwd:ROOT,encoding:'utf8',timeout:2000}).trim();
-    if(!fallback.commit||fallback.commit==='dev') fallback.commit=g;
-    let b=''; try{ b=require('child_process').execFileSync('git',['branch','--show-current'],{cwd:ROOT,encoding:'utf8',timeout:2000}).trim(); }catch(e){}
-    if(b) fallback.branch=b;
+    const cg=require('child_process').execFileSync('git',['log','-1','--format=%cI'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim();
+    if(cg) released=released||cg;
   }catch(e){}
-  return fallback;
+  if(!released) released=new Date().toISOString();
+  try{
+    const g=require('child_process').execFileSync('git',['rev-parse','--short','HEAD'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim();
+    if(!commit||commit==='dev') commit=g;
+    let b=''; try{ b=require('child_process').execFileSync('git',['branch','--show-current'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim(); }catch(e){}
+    if(b) branch=b;
+  }catch(e){}
+  return {commit:commit||'dev', branch, released, started:Date.now()};
 }
 const BUILD = buildInfo();
 const WORDS_PATH = path.join(ROOT, 'words.json');
