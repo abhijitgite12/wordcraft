@@ -469,6 +469,7 @@ Interpret the learner's meaning from the current screen, card content, available
       return out;
     } catch(e){ last=e; }
   }
+  console.log('[ai] orch fell back to local:',String(last&&last.message||last).slice(0,140));
   // Graceful fallback: if the free model is down, still say something useful from the word's data.
   const sayFallback = word ? ('The word is '+word+(def?'. It means '+def+'.':'.')) : 'Go ahead.';
   return {action:'none', say:sayFallback, index:null, verdict:null, done:true, model:'local-fallback'};
