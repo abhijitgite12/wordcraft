@@ -1,5 +1,63 @@
 <!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Word Craft — one word at a time</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700&display=swap" rel="stylesheet"><link rel="stylesheet" href="/style.css?v=wordcraft25"></head><body><div class="app">
-<header><div class="brand"><span class="logo">✦</span><div><b>Word Craft</b></div></div><div class="header-actions"><button class="help-button" id="help-button" aria-label="How to use Word Craft" title="How to use Word Craft">?</button><button class="review-link" id="review-link">Review <b id="header-review-count">0</b></button><button class="browse-link" id="browse-link">Browse</button><span class="streak">🔥 <b id="streak">0</b></span><audio id="study-audio" preload="none"></audio><div class="sound-control"><button class="sound-button" id="sound-button" aria-label="Toggle study music" title="Music on / mute">🎵</button><div class="sound-menu" id="sound-menu"><label>Volume <input id="volume" type="range" min="0" max="100" value="25"></label><button id="mute-button">Mute</button><small class="music-credit">Classical recordings from Wikimedia Commons · public domain / CC BY-SA</small></div></div><button class="theme-button" id="theme-button" aria-label="Theme">🎨</button><div class="theme-menu" id="theme-menu"><b>Choose your vibe</b><button data-theme="sunrise">🍑 Sunrise</button><button data-theme="ocean">🌊 Ocean</button><button data-theme="mint">🌿 Mint</button><button data-theme="lavender">💜 Lavender</button><button data-theme="sky">☁️ Sky</button><button data-theme="rose">🌹 Rose</button><button data-theme="sand">🏖️ Sand</button><button data-theme="forest">🌲 Forest</button><button data-theme="night">🌙 Night</button><button data-theme="peach">🍊 Peach</button><div class="fs-row"><b>Text size</b><div class="fs-controls"><button id="fs-minus" aria-label="Smaller text">A−</button><span id="fs-label">135%</span><button id="fs-plus" aria-label="Larger text">A+</button></div></div><label class="vq-row">Natural voice <input type="checkbox" id="vq-toggle"></label><label class="vq-row">Voice <select id="voice-sel"><option value="en-US-AriaNeural">Aria (female)</option></select></label><button class="about-button" id="version-btn" aria-label="Version / about" title="Build info">ⓘ</button><button class="voice-button" id="voice-btn" aria-label="Voice control (mobile only in header)" title="Voice control (toggle always-on listening)">🎙</button></div><div class="voice-pill" id="voice-pill" aria-label="Voice status" role="status"><span class="vp-dot"></span><span class="vp-wave"></span><span class="vp-label">Voice off</span></div><div class="voice-caption" id="voice-caption"></div></header><div class="top-search" id="top-search-wrap"><span class="ts-icon">🔍</span><input id="top-search" placeholder="Search a word — Enter makes it your flashcard" autocomplete="off" aria-label="Search words"><div class="ts-results" id="ts-results" hidden></div></div><div class="version-pop" id="version-pop" hidden><div class="vp-head"><b>Version</b><button id="vp-close" aria-label="close">×</button></div><div id="vp-body" class="vp-body">Loading…</div></div>
+<header>
+  <div class="brand"><span class="logo">&#10022;</span><div><b>Word Craft</b></div></div>
+  <div class="header-actions">
+    <span class="streak">&#128293; <b id="streak">0</b></span>
+    <button class="settings-btn" id="settings-btn" aria-label="Settings" title="Settings">&#9881;</button>
+    <nav class="settings-menu" id="settings-menu" aria-label="Settings">
+      <div class="sm-section">
+        <div class="sm-actions">
+          <button class="sm-link" id="review-link">Review <b id="header-review-count">0</b></button>
+          <button class="sm-link" id="browse-link">Word bank</button>
+          <button class="sm-link" id="help-button">How to use</button>
+        </div>
+      </div>
+      <div class="sm-sep"></div>
+      <div class="sm-section" id="sound-menu">
+        <div class="sm-title">Sound</div>
+        <div class="sm-row"><span class="muted" id="music-credit">Quiet focus music</span>
+          <button class="sound-button" id="sound-button" aria-label="Music on / mute">&#127925; Play</button></div>
+        <label class="sm-row">Volume <input id="volume" type="range" min="0" max="100" value="25"></label>
+      </div>
+      <div class="sm-sep"></div>
+      <div class="sm-section">
+        <div class="sm-title">Theme</div>
+        <div class="sm-swatches">
+          <button class="sw sw-sunrise" data-theme="sunrise" title="Sunrise"></button>
+          <button class="sw sw-ocean" data-theme="ocean" title="Ocean"></button>
+          <button class="sw sw-mint" data-theme="mint" title="Mint"></button>
+          <button class="sw sw-lavender" data-theme="lavender" title="Lavender"></button>
+          <button class="sw sw-sky" data-theme="sky" title="Sky"></button>
+          <button class="sw sw-rose" data-theme="rose" title="Rose"></button>
+          <button class="sw sw-sand" data-theme="sand" title="Sand"></button>
+          <button class="sw sw-forest" data-theme="forest" title="Forest"></button>
+          <button class="sw sw-night" data-theme="night" title="Night"></button>
+          <button class="sw sw-peach" data-theme="peach" title="Peach"></button>
+        </div>
+      </div>
+      <div class="sm-sep"></div>
+      <div class="sm-section">
+        <div class="sm-title">Text size</div>
+        <div class="fs-controls"><button id="fs-plus" aria-label="Bigger text">A+</button><span id="fs-label">135%</span><button id="fs-minus" aria-label="Smaller text">A&#8722;</button></div>
+      </div>
+      <div class="sm-sep"></div>
+      <div class="sm-section">
+        <div class="sm-title">Tutor voice</div>
+        <label class="sm-switch">Natural voice <input type="checkbox" id="vq-toggle"></label>
+        <label class="sm-select">Voice
+          <select id="voice-sel"><option value="en-US-AriaNeural">Aria (female)</option></select>
+        </label>
+      </div>
+      <div class="sm-sep"></div>
+      <div class="sm-footer">
+        <button class="sm-link" id="version-btn">About &amp; build</button>
+      </div>
+    </nav>
+  </div>
+  <audio id="study-audio" preload="none"></audio>
+  <div class="voice-pill" id="voice-pill" role="status" aria-label="Voice status"><span class="vp-dot"></span><span class="vp-wave"></span><span class="vp-label">Voice off</span></div>
+  <div class="voice-caption" id="voice-caption"></div>
+</header><div class="top-search" id="top-search-wrap"><span class="ts-icon">🔍</span><input id="top-search" placeholder="Search a word — Enter makes it your flashcard" autocomplete="off" aria-label="Search words"><div class="ts-results" id="ts-results" hidden></div></div><div class="version-pop" id="version-pop" hidden><div class="vp-head"><b>Version</b><button id="vp-close" aria-label="close">×</button></div><div id="vp-body" class="vp-body">Loading…</div></div>
 <div class="progressbar"><i id="progress-bar"></i></div>
 <main class="stage">
   <div class="card-zone" id="cardzone">
@@ -16,4 +74,4 @@
 <div class="voice-fallback"><form id="voice-form"><input id="voice-input" placeholder="Say a command…"><button>→</button></form></div>
 <div class="help-panel" id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-title"><div class="help-dialog"><div class="help-head"><div><span class="spark">✦</span><b id="help-title">How to use Word Craft</b></div><button id="close-help" aria-label="Close instructions">×</button></div><div class="help-body"><div class="help-block"><b>Learn a word</b><p>Tap the card to reveal its meaning. Tap <strong>Deep Dive</strong> for examples, memory hooks, and context.</p></div><div class="help-block"><b>Move through cards</b><p><strong>Phone:</strong> swipe left for the next card or right to go back.</p><p><strong>Computer:</strong> drag the card, use the Back/Next buttons, or press <kbd>←</kbd> <kbd>→</kbd>.</p></div><div class="help-block"><b>Quick Test</b><p>Choose an answer or press <kbd>1</kbd>–<kbd>4</kbd>. A wrong answer returns for another pass.</p></div><p class="help-note">Tip: buttons inside the card—like Deep Dive and answer choices—always perform their own action; they do not navigate.</p></div></div></div><div class="craft-panel" id="craft-panel"><div class="panel-head"><div><span class="spark">✦</span><b>Deep Dive</b><small id="craft-sub"></small></div><button id="close-craft">×</button></div><div class="craft-body" id="craft-body"><p>Tap a prompt or ask your own question.</p></div><form id="craft-form"><input id="craft-input" placeholder="Ask about this word…"><button>→</button></form></div>
 <section class="review-page" id="review-page"><button class="back-learn" id="back-learn">← Back to Learn</button><p class="eyebrow">YOUR REVIEW DECK</p><h2>Words worth another look.</h2><p class="review-lede">These are the words that need another pass. Tap one to study it.</p><div class="word-list" id="review-list"></div></section><section class="browse-page" id="browse-page"><button class="back-learn" id="back-browse">← Back to Learn</button><p class="eyebrow">WORD BANK</p><h2>Find a word.</h2><p class="review-lede">Search by spelling, meaning, category, or a close match.</p><input class="search" id="search" placeholder="Search a word or meaning…"><div class="word-list" id="word-list"></div></section>
-<footer>Retrieval + spaced practice = stronger memory. You’ve got this. ✨</footer></div><script src="/app.js?v=wordcraft34"></script></script></body></html>
+<footer>Retrieval + spaced practice = stronger memory. You’ve got this. ✨</footer></div><script src="/app.js?v=wordcraft35"></script></script></body></html>

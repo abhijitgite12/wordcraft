@@ -75,9 +75,10 @@ function nativeSpeak(text){
 }
 function nativeStop(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
 let guideTimer=null, guideKey='';
+function clearGuide(){ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} guideKey=''; }
 function scheduleGuide(){
-  if(guideTimer)clearTimeout(guideTimer);
-  guideTimer=setTimeout(()=>{ guideTimer=null; tutorGuideStep(); }, 1400);
+  clearGuide();
+  guideTimer=setTimeout(()=>{ guideTimer=null; if(!VOICE.on||!VOICE.micOn)return; tutorGuideStep(); }, 1400);
 }
 // Guided tutor loop: after narrating, advance the lesson one natural step.
 function tutorGuideStep(){
@@ -340,6 +341,8 @@ function startListening(){
 function toggleMic(on){
   on=(on===undefined)?!VOICE.micOn:on;
   VOICE.micOn=!!on;
+  orchToken++;            // invalidate any tutor narration already in flight
+  if(!on){ stopSpeak(); } // silence immediately when voice is turned off
   setTutorLive(on&&VOICE.on);
   if(on && VOICE.on){ setVoiceState('listening'); startListening(); sayOnCardChange(); }
   else{ if(VOICE.rec)VOICE.rec.abort(); VOICE.rec=null; setVoiceState('off'); setTutorLive(false); }
@@ -461,7 +464,9 @@ if(vbtn)vbtn.onclick=e=>{e.stopPropagation();toggleAbout();};
 if(vclose)vclose.onclick=()=>{vpop.hidden=true;};
 if(vpop)vpop.onclick=e=>{ if(e.target===vpop)vpop.hidden=true; };
 document.addEventListener('click',e=>{ if(vpop&&!e.target.closest('#version-btn')&&!e.target.closest('.version-pop')) vpop.hidden=true; });
-$('#theme-button').onclick=e=>{$('#theme-menu').classList.toggle('open');e.stopPropagation()};$$('.theme-menu [data-theme]').forEach(b=>b.onclick=()=>{document.body.dataset.theme=b.dataset.theme;localStorage.setItem('satSparkTheme',b.dataset.theme);$('#theme-menu').classList.remove('open')});document.addEventListener('click',e=>{if(!e.target.closest('.header-actions'))$('#theme-menu').classList.remove('open')});
+function refreshThemeSwatches(){const cur=document.body.dataset.theme;$$('#settings-menu .sm-swatches [data-theme]').forEach(b=>b.classList.toggle('on',b.dataset.theme===cur));}
+$('#settings-btn').onclick=e=>{$('#settings-menu').classList.toggle('open');setTimeout(refreshThemeSwatches,0);e.stopPropagation()};$('#settings-btn').onpointerdown=e=>e.stopPropagation();
+$$('#settings-menu .sm-swatches [data-theme]').forEach(b=>b.onclick=()=>{document.body.dataset.theme=b.dataset.theme;try{localStorage.setItem('satSparkTheme',b.dataset.theme);}catch(e){}refreshThemeSwatches()});
 // Real classical recordings from Wikimedia Commons. Compositions are public domain;
 // individual recordings carry the credit/license shown in the sound menu.
 const CLASSICAL=[
@@ -482,17 +487,17 @@ const CLASSICAL=[
 const audio=$('#study-audio');let audioIndex=0,volume=Number(localStorage.getItem('wordCraftVolume')||25),musicWanted=localStorage.getItem('wordCraftMusic')!=='off',sessionTimer=null,trackTimer=null,playing=false,muted=false,playlist=[];
 $('#volume').value=volume;audio.volume=volume/100;
 function shufflePlaylist(){playlist=CLASSICAL.map((_,i)=>i).sort(()=>Math.random()-.5);audioIndex=playlist.shift()??0}
-function loadMusic(){const piece=CLASSICAL[audioIndex%CLASSICAL.length];audio.src=piece.url;audio.dataset.title=piece.name;$('#sound-menu .music-credit').textContent=`Now: ${piece.name} · ${piece.license} · Wikimedia Commons`;$('#music-now').textContent=`${piece.name} · ${piece.license}`;}
+function loadMusic(){const piece=CLASSICAL[audioIndex%CLASSICAL.length];audio.src=piece.url;audio.dataset.title=piece.name;$('#music-credit').textContent=`Now: ${piece.name} · ${piece.license} · Wikimedia Commons`;$('#music-now').textContent=`${piece.name} · ${piece.license}`;}
 function fadeVolume(from,to,ms,done){const start=performance.now();const step=now=>{const p=Math.max(0,Math.min(1,(now-start)/ms));const next=Math.max(0,Math.min(1,(from+(to-from)*p)/100));audio.volume=next;if(p<1)requestAnimationFrame(step);else if(done)done()};requestAnimationFrame(step)}
 function scheduleTrack(){if(trackTimer)clearTimeout(trackTimer);trackTimer=setTimeout(transitionTrack,120000+Math.random()*180000)}
 function transitionTrack(){if(!playing)return;const oldVol=volume;fadeVolume(oldVol,0,1800,()=>{audio.pause();if(!playlist.length)shufflePlaylist();audioIndex=playlist.shift();loadMusic();audio.volume=0;audio.play().then(()=>fadeVolume(0,oldVol,1800)).catch(()=>{});scheduleTrack()})}
-function playMusic(){if(!playlist.length)shufflePlaylist();loadMusic();audio.volume=0;const p=audio.play();if(p&&p.catch)p.catch(()=>{playing=false;$('#sound-button').textContent='🎵';if($('#music-main'))$('#music-main').textContent='Play'});playing=true;muted=false;fadeVolume(0,volume,1600);scheduleTrack();if(!sessionTimer)sessionTimer=setTimeout(()=>{stopMusic();$('#sound-menu .music-credit').textContent='15-minute study session complete ✦'},15*60*1000);$('#sound-button').textContent='🔊 Music';$('#sound-button').classList.add('on');if($('#music-main'))$('#music-main').textContent='Mute';localStorage.setItem('wordCraftMusic','on')}
-function stopMusic(){audio.pause();playing=false;if(sessionTimer){clearTimeout(sessionTimer);sessionTimer=null}if(trackTimer){clearTimeout(trackTimer);trackTimer=null}audio.volume=volume/100;$('#sound-button').textContent='🎵 Music';$('#sound-button').classList.remove('on');if($('#music-main'))$('#music-main').textContent='Play';localStorage.setItem('wordCraftMusic','off')}
+function playMusic(){if(!playlist.length)shufflePlaylist();loadMusic();audio.volume=0;const p=audio.play();if(p&&p.catch)p.catch(()=>{playing=false;$('#sound-button').textContent='🎵';if(document.getElementById('music-main'))document.getElementById('music-main').textContent='Play'});playing=true;muted=false;fadeVolume(0,volume,1600);scheduleTrack();if(!sessionTimer)sessionTimer=setTimeout(()=>{stopMusic();$('#music-credit').textContent='15-minute study session complete ✦'},15*60*1000);$('#sound-button').textContent='🔊 Music';$('#sound-button').classList.add('on');if(document.getElementById('music-main'))document.getElementById('music-main').textContent='Mute';localStorage.setItem('wordCraftMusic','on')}
+function stopMusic(){audio.pause();playing=false;if(sessionTimer){clearTimeout(sessionTimer);sessionTimer=null}if(trackTimer){clearTimeout(trackTimer);trackTimer=null}audio.volume=volume/100;$('#sound-button').textContent='🎵 Music';$('#sound-button').classList.remove('on');if(document.getElementById('music-main'))document.getElementById('music-main').textContent='Play';localStorage.setItem('wordCraftMusic','off')}
 audio.addEventListener('ended',()=>{if(playing)transitionTrack()});
 function toggleSound(){if(playing)stopMusic();else playMusic()}
 function toggleMute(){if(audio.muted||muted){audio.muted=false;muted=false;$('#mute-button').textContent='Mute';if(!playing)playMusic()}else{audio.muted=true;muted=true;$('#mute-button').textContent='Unmute';$('#sound-button').textContent='🔇 Muted';localStorage.setItem('wordCraftMusic','off')}}
-$('#sound-button').onclick=e=>{toggleSound();$('#sound-menu').classList.toggle('open');e.stopPropagation()};$('#music-main').onclick=()=>{toggleSound();$('#music-main').textContent=playing?'Mute':'Play'};$('#volume').oninput=e=>{volume=Number(e.target.value);audio.volume=volume/100;$('#volume-main').value=volume;localStorage.setItem('wordCraftVolume',volume)};$('#volume-main').value=volume;$('#volume-main').oninput=e=>{volume=Number(e.target.value);audio.volume=volume/100;$('#volume').value=volume;localStorage.setItem('wordCraftVolume',volume)};$('#mute-button').onclick=toggleMute;document.addEventListener('click',e=>{if(!e.target.closest('.sound-control'))$('#sound-menu').classList.remove('open')});
-function activateDefaultMusic(e){if(!e.target.closest('.sound-control')&&musicWanted&&!playing)playMusic();document.removeEventListener('pointerdown',activateDefaultMusic)}
+$('#sound-button').onclick=()=>toggleSound();$('#volume').oninput=e=>{volume=Number(e.target.value);audio.volume=volume/100;try{localStorage.setItem('wordCraftVolume',volume)}catch(err){}};$('#volume').value=volume;
+function activateDefaultMusic(/* no autoplay: music only starts when the user presses Play */){ document.removeEventListener('pointerdown',activateDefaultMusic); }
 document.addEventListener('pointerdown',activateDefaultMusic,{once:true,passive:true});
 function renderList(q=''){let m=words.filter(w=>(w.word+' '+(w.definition||'')+' '+(Array.isArray(w.categories)?w.categories.join(' '):w.category||'')).toLowerCase().includes(q.toLowerCase())).slice(0,120);$('#word-list').innerHTML=m.map(w=>`<div class="word-row" data-w="${esc(w.word)}"><b>${esc(w.word)}</b>${catTag(w)}${lvlBadge(w)}<span>${esc(w.definition)}</span></div>`).join('')}
 function editDistance(a,b){a=a.toLowerCase();b=b.toLowerCase();if(a===b)return 0;if(!a.length)return b.length;if(!b.length)return a.length;let prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let row=[i];for(let j=1;j<=b.length;j++)row[j]=Math.min(row[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));prev=row}return prev[b.length]}
@@ -502,7 +507,13 @@ function studyWord(x){if(!x)return;showPage('learn');feed=[{type:'teach',word:x}
 $('#search').oninput=async e=>{let q=e.target.value.trim();if(q.length>=2)dbSearch(q);else renderList()};$('#word-list').onclick=e=>{let r=e.target.closest('[data-w]');if(r)studyWord(words.find(w=>w.word===r.dataset.w))};$('#review-list').onclick=e=>{let r=e.target.closest('[data-review]');if(r)studyWord(words.find(w=>w.word===r.dataset.review))};
 (async()=>{let r=await fetch('/api/words');words=(await r.json()).words;hydrateLocal();hydrateDefinitions();wrong=JSON.parse(localStorage.getItem('satSparkWrong')||'{}');seen=JSON.parse(localStorage.getItem('satSparkSeen')||'{}');score=+localStorage.getItem('satSparkScore')||0;mix=localStorage.getItem('satSparkMix')||'mixed';cat=localStorage.getItem('satSparkCat')||'all';document.body.dataset.theme=localStorage.getItem('satSparkTheme')||'sunrise';applyFontSize();if(musicWanted){$('#sound-button').textContent='🔊';$('#sound-button').classList.add('on')}$$('#mix-chips button').forEach(b=>b.classList.toggle('on',b.dataset.mix===mix));$$('#cat-chips button').forEach(b=>b.classList.toggle('on',b.dataset.cat===cat));const requested=new URLSearchParams(location.search).get('w');if(requested){const shared=words.find(w=>w.word.toLowerCase()===requested.toLowerCase());if(shared){feed=[{type:'teach',word:shared},{type:'test',word:shared}];fi=0}}ensureFeed();render();renderList();initVoiceUI();tele('load','app booted',JSON.stringify({view:"WD-app",hasBtn:!!document.getElementById('version-btn'),hasVoice:typeof orchSay==='function',hasTTS:!!navigator.userAgent,voiceSel:(typeof voiceSel==='string'?voiceSel:'')}))})().catch(e=>console.error(e));// ---- tutor tool: load a specific word as the current flashcard ----
 function findWord(q){const t=String(q||'').toLowerCase().trim().replace(/[^a-z-]/g,'');if(!t)return null;
-  return words.find(w=>w.word.toLowerCase()===t)||words.find(w=>w.word.toLowerCase().startsWith(t))||words.find(w=>w.word.toLowerCase().includes(t))||null}
+  const exact=words.find(w=>w.word.toLowerCase()===t);if(exact)return exact;
+  // similarity search: closest word by edit distance / prefix / substring
+  let best=null,bestD=1e9;for(const w of words){const s=w.word.toLowerCase();let d=1e9;
+    if(s.startsWith(t))d=0;else if(s.includes(t))d=1;else d=editDistance(t,s);
+    if(d<bestD){bestD=d;best=w}}
+  const okLen=t.length>=5?2:(t.length>=3?1:0);
+  return bestD<=okLen?best:null}
 function loadWordCard(q,say){const w=findWord(q);if(!w){speak(say||`I couldn't find ${q||'that word'} in our set. Try another word.`);return}
   recordInteraction('tool','load_word:'+w.word);studyWord(w);
   if(say)speak(say,{});else speak('Here is '+w.word+'. Tap the card when you are ready to see what it means.')}
@@ -520,7 +531,8 @@ function startCategoryTest(q,say){const key=categoryKey(q);
 // ---- top-center search bar: type a word, it becomes the flashcard ----
 function topSearchResults(q){const t=q.toLowerCase().trim();if(t.length<2)return [];
   const catHit=/^(gre|sat|core|academic|general)\b/.test(t);
-  const hits=words.filter(w=>w.word.toLowerCase().includes(t)).sort((a,b)=>{const a0=a.word.toLowerCase().startsWith(t)?0:1,b0=b.word.toLowerCase().startsWith(t)?0:1;return a0-b0||a.word.length-b.word.length}).slice(0,catHit?4:8);
+  // similarity search: word/definition ranking (exact + prefix rank above fuzzy matches)
+  const hits=fuzzyResults(t).slice(0,catHit?4:8);
   const out=hits.map(w=>({w,label:w.word}));
   if(catHit)out.unshift({cat:/^gre/.test(t)?'gre':/^sat/.test(t)?'sat-hf':/^core/.test(t)?'core':/^academic/.test(t)?'academic':'general',label:t.toUpperCase()+' words'});
   return out}
