@@ -64,3 +64,6 @@ body.v-thinking{background:radial-gradient(circle at 50% 0,rgba(101,85,216,.18),
 body.v-speaking{background:radial-gradient(circle at 50% 0,rgba(224,120,97,.16),transparent 46%),radial-gradient(circle at 90% 0,var(--lav),transparent 30%),var(--cream)}
 /* dim + calm when voice off */
 body.v-off{background:radial-gradient(circle at 60% 0,rgba(0,0,0,.02),transparent 34%),radial-gradient(circle at 90% 0,var(--lav),transparent 30%),var(--cream)}
+/* ---- natural voice toggle (theme menu) ---- */
+.vq-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--line);margin-top:5px;padding:8px 7px 2px;font-size:11px;color:var(--muted);font-weight:700}
+.vq-row input{accent-color:var(--purple);width:auto}

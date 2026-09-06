@@ -24,17 +24,62 @@ function setVoiceCaption(text,asAssistant){
   cap.classList.toggle('user',!!text&&!asAssistant);
   cap.classList.toggle('hidden',!text);
 }
-// ---- text-to-speech with live state ----
-function speak(text,{rate=VOICE.rate,interrupt=true}={}){
-  if(!VOICE.on||!window.speechSynthesis||!text)return;
-  if(interrupt)window.speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(String(text));u.rate=rate;u.pitch=1;
+// ---- serialized human-voice speech (Edge-TTS) with native fallback ----
+const humanVoice = { on: localStorage.getItem('wordCraftHuman')!=='off' }; // default ON
+// ---- smart "know when to speak" memory: track recent tutor lines so it never repeats itself ----
+const talkMemory=[];
+function rememberLine(text){ talkMemory.push({text, at:Date.now()}); if(talkMemory.length>40) talkMemory.shift(); }
+function saidRecently(text, withinMs=8500){ const t=text.trim().toLowerCase(); return talkMemory.some(m=> (Date.now()-m.at)<withinMs && m.text.trim().toLowerCase()===t); }
+function base64ToBlob(b64){ const bin=atob(b64), buf=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i); return new Blob([buf],{type:'audio/mpeg'}); }
+async function fetchTTS(text){
+  try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
+}
+let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
+function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); } }
+function nativeSpeak(text){
+  if(!window.speechSynthesis)return;
+  const u=new SpeechSynthesisUtterance(String(text)); u.rate=VOICE.rate; u.pitch=1;
   u.onstart=()=>setVoiceState('speaking');
-  u.onend=u.onerror=()=>{ if(VOICE.micOn) setVoiceState('listening'); };
+  u.onend=u.onerror=()=>{ finishLine(); };
   setVoiceCaption(String(text),true);
+  window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
-function stopSpeak(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
+function nativeStop(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
+function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } speakingBusy=false; activeLine=''; pending=''; activeAudio=null; }
+// Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
+async function speak(text,{force=false,human=true,allowRepeat=false}={}){
+  if(!VOICE.on||!text)return;
+  text=String(text).trim(); if(!text)return;
+  if(speakingBusy && !force){
+    // if we're already saying this exact thing, ignore; else queue for after.
+    if(activeLine===text || saidRecently(text)) return;
+    pending=text; return;
+  }
+  if(speakingBusy && force){ stopAllAudio(); }
+  if(!allowRepeat && saidRecently(text)) return;
+  speakingBusy=true; activeLine=text;
+  rememberLine(text);
+  setVoiceCaption(text,true); setVoiceState('speaking');
+  const brief=text.length<45;
+  const useHuman=human && humanVoice.on && !brief && !!window.fetch && !ttsFetching;
+  if(useHuman){
+    ttsFetching=true; const t0=Date.now(); let got=null;
+    try{ got=await fetchTTS(text); }catch(e){}
+    ttsFetching=false;
+    if(!got || Date.now()-t0>1400){ if(!activeAudio) nativeSpeak(text); return; }
+    const a=new Audio(), url=URL.createObjectURL(got); a.src=url; activeAudio=a;
+    a.onended=()=>{ URL.revokeObjectURL(url); finishLine(); };
+    a.onerror=()=>{ URL.revokeObjectURL(url); nativeSpeak(text); };
+    try{ await a.play(); }catch(e){ nativeSpeak(text); }
+  } else {
+    nativeSpeak(text);
+  }
+}
+function saidRecently(text){ const n=String(text||'').trim().toLowerCase(); const now=Date.now(); return talkMemory.some(m=>now-m.at<9000 && m.text.trim().toLowerCase()===n); }
+function stopSpeak(){ stopAllAudio(); }
+
+
 // ---- local reflexive fast-path (zero network) ----
 function localFastpath(text){
   const t=String(text||'').toLowerCase().trim(); if(!t)return null;
@@ -103,24 +148,47 @@ function cleanTeach(w){
   return {word,def,pos,sy};
 }
 // Build a warm, human tutor paragraph for a given moment on the current card.
+// Uses conversation memory (recent right/wrong, repeat count, sentiment) so it speaks like a real person who knows what's happening.
+const tutorState = { lastCorrect:true, consecutiveMiss:0, streak:0, seenWords:{} };
+function bumpTutor(ev, w){ if(ev==='correct'){ tutorState.lastCorrect=true; tutorState.streak++; tutorState.consecutiveMiss=0; if(w) tutorState.seenWords[w.word]=(tutorState.seenWords[w.word]||0)+1; } else if(ev==='wrong'){ tutorState.lastCorrect=false; tutorState.consecutiveMiss++; if(w) tutorState.seenWords[w.word]=(tutorState.seenWords[w.word]||0)+1; } }
 function tutorLine(w, moment){
   const {word,def,pos,sy}=cleanTeach(w);
-  if(moment==='learn'){ return `The word is ${word}${pos?', a '+pos:''}.`; }
-  if(moment==='question'){ return `Okay, quick test. Which of these best captures ${word}? Pick A, B, C, or D, or say it in your own words.`; }
-  if(moment==='relearn'){ return `${word}${pos?' — a '+pos:''} — means ${def}. ${sy}. Let me give an example: ${w.example||'think of it easing off.'} Take it in for a beat, then we'll keep moving.`; }
-  if(moment==='reveal'){
-    let l=`Here's where ${word} lives. It's ${pos?('a '+pos+', '):''}meaning ${def}.`;
-    if(w.example) l+=` You'd say — ${w.example}`;
-    if(w.synonyms&&w.synonyms.length) l+=` Close relatives: ${w.synonyms.slice(0,3).join(', ')}.`;
-    if(w.antonyms&&w.antonyms.length) l+=` And its opposite: ${w.antonyms.slice(0,2).join(', ')}.`;
-    l+=` Try using it in your next sentence.`; return l;
+  const misses=(w.word?tutorState.seenWords[w.word]:0)||0;
+  const pick=a=>a[Math.floor(Math.random()*a.length)];
+  if(moment==='learn'){
+    const p=pos?('a '+pos):'';
+    return pick([`The word is ${word}${pos?', a '+pos:''}.`,`Here's a fresh one — ${word}${pos?', a '+pos:''}.`,`Alright, take a look at ${word}${pos?', a '+pos:''}.`]);
   }
-  if(moment==='correct'){ return `That's right! ${word} means ${def}. Nice recall.`; }
-  if(moment==='wrong'){ return `Not quite, and that's okay. ${word} actually means ${def}. ${w.example?('Think '+w.example):''} No stress — it'll come back around.`; }
-  if(moment==='close'){ return `Very close! ${word} is more about ${def}. You've basically got it.`; }
-  if(moment==='dive'){ return `Let's go deeper on ${word}. What would you like to know — explain it plainly, a memory hook, compare it to a similar word, or ask anything?`; }
-  if(moment==='review'){ return `You have ${Object.keys(wrong).length} word${Object.keys(wrong).length===1?'':'s'} to review. Tap one or say start.`; }
-  if(moment==='empty'){ return `No words here just yet. Say reset, or bump the filters.`; }
+  if(moment==='question'){
+    return `Okay, quick test. Which of these best captures ${word}? Pick A, B, C, or D — or, even better, say it in your own words.`;
+  }
+  if(moment==='relearn'){
+    if(misses>1) return `${word} — let's really lock this one in. It means ${def}. ${sy}. Here's the image: ${w.example||'imagine the intensity easing'}. Say it back to me.`;
+    return `${word}${pos?' — a '+pos:''} — means ${def}. ${sy}. Try the example: ${w.example||'picture it winding down.'} Take it in.`;
+  }
+  if(moment==='reveal'){
+    const posL=pos?('a '+pos):'an idea';
+    let l=pick([`So what is ${word}? It's ${pos?('a '+pos+' meaning '):''}${def}.`,
+               `Here's the breakdown on ${word}: it means ${def}, as ${pos?('a '+pos+'.'):'essentially '}`,
+               `${word} — straight from the dictionary — means ${def}, ${posL}.`]);
+    if(w.example) l+=` Picture it: ${w.example}`;
+    if(w.synonyms&&w.synonyms.length) l+=` Its cousins: ${w.synonyms.slice(0,3).join(', ')}.`;
+    if(w.antonyms&&w.antonyms.length) l+=` Its opposite: ${w.antonyms.slice(0,2).join(', ')}.`;
+    return l;
+  }
+  if(moment==='correct'){
+    if(tutorState.streak>=3) return `That's two in a row — ${word} means ${def}, and you nailed it. Keep this energy!`;
+    if(misses>0 && tutorState.lastCorrect) return `Ah, now you've got it. ${word} is ${def}, and it won't be leaving your head now.`;
+    return pick([`That's right — ${word} is ${def}. Crisp recall.`,`Exactly. ${word} means ${def}. You're on it.`,`Well done. ${word} = ${def}, and you read it perfectly.`]);
+  }
+  if(moment==='wrong'){
+    return pick([`Not quite — and that's fine. ${word} is really ${def}. ${w.example?('The image is '+w.example):''} It'll come round again.`,
+                `Don't sweat it. ${word} actually means ${def}. ${w.example?('Think '+w.example):''} We'll give it one more go.`,
+                `Almost. ${word} speaks to ${def}, not what you picked. ${w.example?('See: '+w.example):''} Let it stick.`]);
+  }
+  if(moment==='dive'){ return `Let's go deeper on ${word}. Tell me — explain it plainly, a memory hook, a near-synonym, or ask anything.`; }
+  if(moment==='review'){ return `You've got ${Object.keys(wrong).length} to tidy up. The earlier one, ${word}, stubbed you — let's smooth it out.`; }
+  if(moment==='empty'){ return `Nothing's here. Say reset or tweak the filters and we'll find words.`; }
   return '';
 }
 // Speak a natural teaching line tied to the current card.
@@ -172,7 +240,7 @@ async function runAction(d){
     case 'repeat': speak(w?(w.word+' — '+(w.aiDefinition||w.definition||'')):(n||'Repeating.')); break;
     case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Slower');break;
     case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Faster.');break;
-    case 'reveal': showFlip(); speak(n||w?w.word+' means '+(w.aiDefinition||w.definition||''):'Here it is.'); break;
+    case 'reveal': showFlip(); if(!tutorLive) speak(n||w?(w.word+' means '+(w.aiDefinition||w.definition||'')):'Here it is.'); break;
     case 'deep_dive': if(w)openCraft(w); if(n)speak(n); break;
     case 'options': speak(n||(currentOptions().length?currentOptions().map((o,i)=>'Option '+String.fromCharCode(65+i)+'. '+o).join(' '):'You can say next, back, skip, reveal, or help.')); break;
     case 'help': speak(n||'You can say next, back, skip, reveal, deep dive, or ask me anything.'); break;
@@ -190,14 +258,16 @@ async function runAction(d){
 // free-spoken meaning: graded by the agent verdict (0 wrong, 1 close, 2 correct)
 function answerFree(verdict, narration){
   const w=cur()?.word; const note=$('#t-ans');
-  if(verdict===2){ delete wrong[w.word]; score++; if(note){note.textContent='✦ Correct. '+(narration||'');note.className='answer-note good';} celebrate(note,false); }
-  else if(verdict===1){ if(note){note.textContent='Close — '+(narration||'you have the right idea.')+' The full meaning is '+displayDef(w)+'.';note.className='answer-note good';} }
-  else{ wrong[w.word]=(wrong[w.word]||0)+1; if(note){note.textContent='Not quite. '+(narration||(w.aiDefinition||w.definition||''));note.className='answer-note bad';} const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj}); }
+  if(verdict===2){ delete wrong[w.word]; score++; bumpTutor('correct',w); if(note){note.textContent='✦ Correct. '+(narration||'');note.className='answer-note good';} celebrate(note,false); speak(narration||('Correct! '+w.word+' means '+displayDef(w)+'.')); }
+  else if(verdict===1){ if(note){note.textContent='Close — '+(narration||'you have the right idea.')+' The full meaning is '+displayDef(w)+'.';note.className='answer-note good';} speak('Close — '+(narration||('you have the right idea. '+w.word+' means '+displayDef(w)))); }
+  else{ wrong[w.word]=(wrong[w.word]||0)+1; bumpTutor('wrong',w); if(note){note.textContent='Not quite. '+(narration||(w.aiDefinition||w.definition||''));note.className='answer-note bad';} speak('Not quite. '+(narration||(w.aiDefinition||w.definition||''))+'. We will revisit it.'); const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj}); }
   persist(); update(); autoSizeCard();
 }
 // ---- handle an utterance: reflexive local first, else the agent ----
 async function handleUtterance(text){
   text=String(text||'').trim(); if(!text)return;
+  if(text===prevUtterance && Date.now()-lastUtteranceAt<1500) return; // ignore recognizer repeats
+  prevUtterance=text; lastUtteranceAt=Date.now();
   setVoiceState('thinking','',text);
   const local=localFastpath(text);
   if(local){ setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''}); }
@@ -242,6 +312,7 @@ function initVoiceUI(){
   const btn=$('#voice-btn'), pill=$('#voice-pill');
   const toggle=()=>toggleMic(!VOICE.micOn);
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
+  const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
   setVoiceState('off');
@@ -310,7 +381,7 @@ function showFlip(){let c=$('#card');if(c.querySelector('.face')&&!c.classList.c
 function move(dir){let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
-function answer(btn){let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
+function answer(btn){let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];bumpTutor('correct',w);btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
 const CARD=$('#card');let drag=null,suppressClick=false;
 function dragStart(e){if(e.pointerType&&e.pointerType!=='mouse')return;if(e.button!==undefined&&e.button!==0)return;if(e.target.closest('button,.option'))return;if(CARD.classList.contains('swiping'))return;drag={id:e.pointerId||'mouse',startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastTime:performance.now(),vx:0,moved:false,axisLocked:false};CARD.setPointerCapture?.(e.pointerId);CARD.classList.add('dragging')}
 function dragMove(e){const id=e.pointerId??'touch';if(!drag||id!==drag.id)return;const now=performance.now(),dx=e.clientX-drag.startX,dy=e.clientY-drag.startY;if(!drag.axisLocked&&Math.hypot(dx,dy)>8){if(Math.abs(dy)>Math.abs(dx)*1.15){drag.axisLocked='vertical';return}drag.axisLocked='horizontal'}if(drag.axisLocked==='vertical')return;const dt=Math.max(1,now-drag.lastTime);drag.vx=(e.clientX-drag.lastX)/dt;drag.lastX=e.clientX;drag.lastTime=now;if(Math.abs(dx)>6)drag.moved=true;if(!drag.moved)return;const width=CARD.getBoundingClientRect().width||400,clamp=Math.max(-width*1.35,Math.min(width*1.35,dx));const resistance=Math.abs(dx)>width*.55?width*.55+(Math.abs(dx)-width*.55)*.35:Math.abs(dx);const x=Math.sign(dx)*resistance;CARD.style.transform=`translate3d(${x}px,${Math.min(18,Math.abs(x)/width*18)}px,0) rotate(${x/width*11}deg)`;const progress=Math.min(1,Math.abs(x)/(width*.55));CARD.style.setProperty('--swipe-progress',progress);$('#cardzone')?.classList.toggle('dragging-left',dx<0);$('#cardzone')?.classList.toggle('dragging-right',dx>0);$('#stack-prev')?.style.setProperty('--stack-progress',progress);$('#stack-next')?.style.setProperty('--stack-progress',progress);$('#stack-second')?.style.setProperty('--stack-progress',progress);$('#stack-third')?.style.setProperty('--stack-progress',progress);$('#stamp-next')?.classList.toggle('visible',dx<0);$('#stamp-back')?.classList.toggle('visible',dx>0);e.preventDefault()}

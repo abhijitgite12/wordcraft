@@ -135,8 +135,30 @@ function rateOk(ip) {
 function send(res, status, data, type='application/json') {
   res.writeHead(status, {'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store'});
   res.end(type === 'application/json' ? JSON.stringify(data) : data);
+}function clean(text) { return String(text || '').replace(/[<>]/g, '').slice(0, 500); }
+
+// ---- Human neural TTS via Edge-TTS (free, no key) ----
+const { execFileSync } = require('child_process');
+const cacheDir = path.join(ROOT, '.tts');
+let ttsReady = false;
+try{ fs.mkdirSync(cacheDir,{recursive:true}); ttsReady = checkTTS(); }catch(e){}
+function checkTTS(){ try{ execFileSync('python3',['-c','import edge_tts'],{timeout:3000,stdio:'pipe'}); return true; }catch(e){ return false; } }
+// in-memory audio cache (text+voice -> base64), bounded
+const ttsCache = new Map(); const TTS_MAX = 400;
+const VOICES = process.env.TTS_VOICE || 'en-US-AriaNeural';
+async function tts(text, voice){
+  const v = (voice && VOICES.includes(voice)) ? voice : VOICES;
+  const key = (v)+'::'+text;
+  if (ttsCache.has(key)) return {buf:ttsCache.get(key), key, cached:true};
+  const mp3 = path.join(cacheDir, Math.random().toString(36).slice(2)+'.mp3');
+  execFileSync('python3',['-m','edge_tts','--voice',v,'--text',text,'--write-media',mp3],{timeout:20000,stdio:'pipe'});
+  const buf = fs.readFileSync(mp3); fs.unlink(mp3,()=>{});
+  if (ttsCache.size > TTS_MAX) ttsCache.delete(ttsCache.keys().next().value);
+  ttsCache.set(key, buf);
+  return {buf, voice:v, cached:false};
 }
-function clean(text) { return String(text || '').replace(/[<>]/g, '').slice(0, 500); }
+function bufToBase64(buf){ return buf.toString('base64'); }
+function base64ToBuf(b){ return Buffer.from(b,'base64'); }
 async function aiDefinition(body) {
   if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
   const word = clean(body.word), source = clean(body.definition);
@@ -399,6 +421,21 @@ const server=http.createServer((req,res)=>{
     if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await agentTurn(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
+  }
+  // Human neural TTS (Edge-TTS). Returns base64 mp3. Cached server+client side.
+  if (req.method==='POST' && route==='/api/tts') {
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
+    req.on('end',async()=>{
+      try{
+        const {text='', voice=''}=JSON.parse(raw||'{}');
+        const t=String(text).trim().slice(0,500);
+        if(!t) return send(res,400,{error:'text required'});
+        if(!ttsReady) return send(res,501,{error:'TTS unavailable'});
+        if(!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+        const r=await tts(t, voice);
+        send(res,200,{audio:bufToBase64(r.buf), key:r.key, cached:r.cached, voice:r.voice||''});
+      }catch(e){ send(res,500,{error:e.message}); }
+    }); return;
   }
   // Fast cached example lookup: returns instantly when already generated, else generates + caches.
   if (req.method==='POST' && route==='/api/example') {
