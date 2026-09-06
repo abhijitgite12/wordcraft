@@ -69,3 +69,7 @@ body.v-off{background:radial-gradient(circle at 60% 0,rgba(0,0,0,.02),transparen
 .vq-row input{accent-color:var(--purple);width:auto}
 /* ---- voice picker selector (theme menu) ---- */
 .vq-row select{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:5px 6px;font-size:11px;color:var(--ink);max-width:100%}
+/* voice button on/off toggle look */
+.voice-button{margin-left:6px}
+.voice-button.on{background:var(--mint);border-color:#82c29d;box-shadow:0 0 0 3px #82c29d33}
+.voice-button:not(.on){opacity:.75}

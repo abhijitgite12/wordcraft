@@ -241,8 +241,23 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
       return {...parsed, model};
     } catch (e) { last = e; }
   }
-  throw last || new Error('No free model responded');
+  // Graceful fallback when the free model is unavailable: teach from stored word data (never a hard 500).
+  const w0 = words.find(x=>x.word===word);
+  const ex = (w0 && w0.example) ? w0.example : '';
+  const sy = (w0 && Array.isArray(w0.synonyms)) ? w0.synonyms.slice(0,3) : [];
+  const ant = (w0 && Array.isArray(w0.antonyms)) ? w0.antonyms.slice(0,2) : [];
+  const dd = String(definition||'').replace(/^\s*[\-\u2014]?\s*(?:n|v|adj|adv)\.?\s*/,'').trim();
+  return {
+    directAnswer: word+' means '+dd+'.',
+    explanation: 'Plainly, '+word+' is '+dd+'.',
+    example: ex||'',
+    memoryHook: 'Connect '+word+' to '+dd+'.',
+    deeperQuestion: '',
+    contextNote: 'Here is the stored definition for this word.',
+    synonyms: sy, antonyms: ant, model:'local-fallback'
+  };
 }
+
 // Map a free-form spoken utterance to one of the page's legal tools (intent classification).
 // Reuses the same free OpenRouter models + rate limiter as genie/definition.
 const INTENT_TOOLS = ['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','yes','no','mute','voice_on','stop','unknown'];
@@ -421,7 +436,9 @@ Do not add text outside the JSON. Do not repeat phrases you already used.`;
       return out;
     } catch(e){ last=e; }
   }
-  throw last||new Error('No free model responded');
+  // Graceful fallback: if the free model is down, still say something useful from the word's data.
+  const sayFallback = word ? ('The word is '+word+(def?'. It means '+def+'.':'.')) : 'Go ahead.';
+  return {action:'none', say:sayFallback, index:null, verdict:null, done:true, model:'local-fallback'};
 }
 
 function serve(req,res) {

@@ -15,13 +15,19 @@ if(!window.__telBound){ window.__telBound=true;
 const VOICE = { on: localStorage.getItem('wordCraftVoiceOn')!=='off', rate: Number(localStorage.getItem('wordCraftRate')||1), micOn:false, state:'off', rec:null,
   sessionID: localStorage.getItem('wordCraftSession') || (()=>{const s='wc-'+Math.random().toString(36).slice(2,10);localStorage.setItem('wordCraftSession',s);return s})() };
 let agentBusy=false;
-const VoiceLabels={off:'Voice off',listening:'Listening',hearing:'Hearing you…',thinking:'Thinking…',speaking:'Saying…'};
+const VoiceLabels={off:'Voice off',listening:'Listening',thinking:'Thinking…',speaking:'Saying…'};
 // ---- state machine (Grok-style): off | listening | hearing | thinking | speaking ----
 function setVoiceState(state, label, transcript){
+  // If voice was turned off, a stale async response must not resurrect the active state.
+  if(!VOICE.micOn && state!=='off' && !VOICE.forceTransient){ 
+    // allow brief 'speaking'/'listening' only if voice is genuinely on; otherwise drop.
+    return; 
+  }
   VOICE.state=state;
   const pill=$('#voice-pill'), body=document.body;
   if(pill){ pill.dataset.state=state; const l=pill.querySelector('.vp-label'); if(l)l.textContent=label||VoiceLabels[state]||''; pill.classList.toggle('active',state!=='off'); }
   if(body){ body.classList.remove('v-off','v-listening','v-hearing','v-thinking','v-speaking'); body.classList.add('v-'+state); }
+  const vb=$('#voice-btn'); if(vb){ vb.classList.toggle('on', state!=='off'&&state!=='v-off'); }
   if(typeof transcript==='string') setVoiceCaption(transcript,false);
   if(state==='off') setVoiceCaption('',false);
 }
@@ -300,7 +306,7 @@ function startListening(){
   if(!VOICE.on)return;
   const rec=new SR(); rec.lang='en-US'; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
   rec.onstart=()=>setVoiceState('listening');
-  rec.onspeechstart=()=>setVoiceState('hearing');
+  rec.onspeechstart=()=>setVoiceState('listening');
   rec.onspeechend=()=>{ if(VOICE.micOn) setVoiceState('listening'); };
   rec.onresult=e=>{
     let interim='',final='';
@@ -309,9 +315,9 @@ function startListening(){
     final=f.trim(); interim=im.trim();
     setVoiceCaption(final||interim,false);
     if(final){ setVoiceState('thinking','',final); handleUtterance(final); }
-    else setVoiceState('hearing');
+    else setVoiceState('listening');
   };
-  rec.onerror=e=>{ if(e.error==='not-allowed'||e.error==='service-not-allowed'){ VOICE.micOn=false; setVoiceState('off'); } else setVoiceState('hearing'); };
+  rec.onerror=e=>{ if(e.error==='not-allowed'||e.error==='service-not-allowed'){ VOICE.micOn=false; setVoiceState('off'); } else setVoiceState('listening'); };
   rec.onend=()=>{ if(VOICE.micOn) startListening(); };
   rec.start(); VOICE.rec=rec;
 }
