@@ -551,3 +551,26 @@ function wireTopSearch(){const inp=$('#top-search'),box=$('#ts-results');if(!inp
   document.addEventListener('click',e=>{if(!e.target.closest('.top-search'))close()});
 }
 wireTopSearch();
+// ---- semantic search (last-declared, end wins) ----
+function semanticResults(q){const ql=String(q||'').toLowerCase().trim();if(ql.length<2)return[];
+  const qwords=ql.split(/\s+/).filter(w=>w.length>2);const scored=[];
+  for(const w of words){
+    const def=String(w.definition||w.aiDefinition||'').toLowerCase();
+    const syn=(w.synonyms||[]).map(s=>String(s).toLowerCase());
+    let score=0; if(syn.includes(ql))score+=60;
+    for(const tw of qwords){ if(def.split(/\s+/).includes(tw))score+=32; else if(def.includes(tw))score+=10; if(syn.some(s=>s===tw))score+=16; if(String(w.word).toLowerCase()===tw)score+=500; }
+    if(score>0)scored.push({w,score});
+  }
+  return scored.sort((a,b)=>b.score-a.score).slice(0,5).map(x=>x.w);}
+function topSearchResults(q){
+  q=String(q||'').trim(); if(q.length<2)return[];
+  const ql=q.toLowerCase();
+  const bc=(ql.match(/^(gre|sat|core|academic|general)\b/)||[])[0]||'';
+  const cat=bc?{gre:'gre',sat:'sat-hf',core:'core',academic:'academic',general:'general'}[bc]:'';
+  const out=[]; if(cat)out.push({cat,label:cat.toUpperCase()+' words'});
+  const used=new Set();
+  const sim=fuzzyResults(ql).filter(x=>x&&x.word&&String(x.word).toLowerCase()!==ql&&!used.has(x.word)).slice(0,5);
+  sim.forEach(x=>{used.add(x.word);out.push({w:x,label:x.word})});
+  const sem=semanticResults(ql).filter(x=>x&&!used.has(x.word)).slice(0,5);
+  sem.forEach(x=>out.push({w:x,label:x.word}));
+  return out;}
