@@ -122,10 +122,12 @@ async function searchDb(q) {
   for (let i = 0; i < (o.word||[]).length; i++) out.push({ word: o.word[i], partOfSpeech: o.partOfSpeech[i], definition: o.definition[i], level: o.level[i], category: o.category[i] });
   return out;
 }
+// Low-cost paid OpenRouter models. The existing OPENROUTER_API_KEY is reused.
+// Primary is optimized for short tool-routing and tutor turns; fallbacks keep AI resilient.
 const models = [
-  'google/gemma-4-31b-it:free',
-  'minimax/minimax-m3:free',
-  'z-ai/glm-5.2:free'
+  'nvidia/nemotron-3.5-lightning',
+  'google/gemma-4-26b-a4b-it',
+  'qwen/qwen3.5-9b'
 ];
 
 // Simple per-IP rate limiter for the AI endpoint so a public free host can't be abused.
