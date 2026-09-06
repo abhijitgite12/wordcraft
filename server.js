@@ -436,6 +436,10 @@ function guard(req,res){
   return false;
 }
 const server=http.createServer((req,res)=>{
+  // ---- request logging: method path status (ms) ----
+  const _t0=Date.now(), _method=req.method||'?', _path=req.url||'?';
+  const _orig=res.end.bind(res);
+  res.on('finish',()=>{ if(_path.startsWith('/api/')||_path.startsWith('/login')) console.log(`[log] ${_method} ${_path.split('?')[0]} ${res.statusCode} ${Date.now()-_t0}ms`); });
   const ip = req.socket.remoteAddress || 'x';
   const route = req.url.split('?')[0];
   // Login route (not gated)
@@ -467,6 +471,15 @@ const server=http.createServer((req,res)=>{
   }
   if (req.method==='GET' && route==='/api/words') return send(res,200,{words});
   if (req.method==='GET' && route==='/api/version') return send(res,200,BUILD);
+  // Client-side telemetry: the browser POSTs its loaded version, errors, and interactions so we can see real behavior.
+  if (req.method==='POST' && route==='/api/log') {
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>20000) req.destroy();});
+    req.on('end',()=>{ try{
+      const d=JSON.parse(raw||'{}');
+      console.log(`[client] ${clean(d.type||'ev')} ${clean(d.msg||'')} ${clean(d.detail||'')}${d.ver?(' ver='+clean(d.ver)):''}${d.ua?(' ua='+clean(d.ua.slice(0,60))):''}`);
+      send(res,200,{ok:true});
+    }catch(e){ send(res,400,{error:'bad'}); } }); return;
+  }
   if (req.method==='POST' && route==='/api/search') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>2000) req.destroy();});
     req.on('end',async()=>{try{const {q=''}=JSON.parse(raw||'{}');send(res,200,{results:await searchDb(String(q).slice(0,60))})}catch(e){send(res,500,{error:e.message})}}); return;
