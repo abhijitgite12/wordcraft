@@ -146,8 +146,9 @@ function checkTTS(){ try{ execFileSync('python3',['-c','import edge_tts'],{timeo
 // in-memory audio cache (text+voice -> base64), bounded
 const ttsCache = new Map(); const TTS_MAX = 400;
 const VOICES = process.env.TTS_VOICE || 'en-US-AriaNeural';
+const VOICE_OPTIONS = ['en-US-AriaNeural','en-US-GuyNeural','en-US-JennyNeural','en-US-EmmaNeural','en-US-BrianNeural','en-US-AvaNeural','en-US-AndrewMultilingualNeural','en-US-ChristopherNeural','en-US-MichelleNeural','en-US-EricNeural'];
 async function tts(text, voice){
-  const v = (voice && VOICES.includes(voice)) ? voice : VOICES;
+  const v = (voice && (VOICE_OPTIONS.includes(voice)||VOICES.includes(voice))) ? voice : VOICES;
   const key = (v)+'::'+text;
   if (ttsCache.has(key)) return {buf:ttsCache.get(key), key, cached:true};
   const mp3 = path.join(cacheDir, Math.random().toString(36).slice(2)+'.mp3');
@@ -338,6 +339,77 @@ Return valid JSON ONLY with keys: action, index (number 0-3 or null), verdict (0
   }
   throw last||new Error('No free model responded');
 }
+// ---- Agentic orchestrator: proactive AND reactive turns in one loop step. ----
+// The model writes natural spoken lines AND returns a page action (tool).
+const ORCH_ACTIONS=['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','yes','no','mute','voice_on','stop','none'];
+const tmem=new Map();
+async function orch(body){
+  if(!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const session=clean(body.session||'anon');
+  const text=clean(body.text||'');
+  const moment=clean(body.moment||'');
+  const word=clean(body.word), def=clean(body.definition), pos=clean(body.pos||'');
+  const ex=clean(body.example||'');
+  const syn=Array.isArray(body.synonyms)?body.synonyms.map(clean).slice(0,3).join(', '):'';
+  const ant=Array.isArray(body.antonyms)?body.antonyms.map(clean).slice(0,2).join(', '):'';
+  const opts=Array.isArray(body.options)?body.options.map(clean).slice(0,4):[];
+  const screen=clean(body.screen||'teach');
+  const stats=clean(body.stats||'');
+  const tools=Array.isArray(body.tools)?body.tools.filter(t=>ORCH_ACTIONS.includes(t)):[];
+  const tl=tools.length?tools.join(', '):'next, back, skip, reveal, repeat, answer_option, deep_dive';
+  const m=tmem.get(session)||[];
+  const hist=m.slice(-8).map(x=>x.role==='u'?'User: '+x.txt:'Tutor: '+x.txt).join('\n')||'(fresh session)';
+  const optText=opts.length?opts.map((o,i)=>String.fromCharCode(65+i)+') '+o).join(' | '):'none (not a quiz)';
+  const sent={
+    learn:'Introduce the word, say it clearly, and invite the learner to try it.',
+    question:'Give the word as a quick test; ask for a choice A-D or their own words.',
+    reveal:'After revealing, teach the meaning + example + a synonym.',
+    correct:'Warmly confirm a CORRECT answer; acknowledge the streak if any.',
+    wrong:'Encouragingly correct a WRONG answer; restate meaning + example.',
+    relearn:'Gently reinforce a returning word; ask them to say it back.',
+    nudge:'Nudge the stalled learner toward what to do now.',
+    dive:'Invite a deep dive; ask what they want to know.',
+    review:'Cheer them to review and pick a missed word.'
+  };
+  const job = text ? ('The learner just said: \"'+text+'\". Respond naturally, decide the next tool, and speak.') : ('Proactive beat ('+moment+'): '+(sent[moment]||sent.reveal));
+  const prompt=`You are an attentive, warm human SAT and GRE vocab tutor, hell-bent on making sure the learner truly knows each word. You talk aloud the way a great teacher does: natural, warm, varied, never robotic or scripted.
+
+CURRENT: screen=${screen}, word="${word}"${pos?' ('+pos+')':''}, definition="${def}".
+Example: ${ex}. Synonyms: ${syn}. Antonyms: ${ant}. Quiz options: ${optText}. Learner stats: ${stats}.
+Tools you can act with: ${tl}
+
+Recent dialogue:
+${hist}
+
+${job}
+
+Reply ONLY valid JSON:
+{"say":"<short natural spoken line, 1-3 sentences, <55 words, in your tutor voice>",
+ "action":"<pick one tool from the tools list, or 'none'>",
+ "index":<0-3 if learner chose an option, else null>,
+ "verdict":<0 wrong / 1 close / 2 correct when grading a spoken meaning, else null>,
+ "done":<true if now wait for the learner, false if continue acting>}
+Do not add text outside the JSON. Do not repeat phrases you already used.`;
+  let last;
+  for (const model of models) {
+    try {
+      const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:180})});
+      const j=await r.json(); if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
+      const p=JSON.parse(str);
+      const action=ORCH_ACTIONS.includes(p.action)?p.action:'none';
+      const say=clean(p.say||'').slice(0,220);
+      const out={action, say, index:(Number.isInteger(p.index)&&p.index>=0&&p.index<=3)?p.index:null, verdict:([0,1,2].includes(p.verdict)?p.verdict:null), done:(p.done!==false), model};
+      const a=tmem.get(session)||[];
+      if(text){ a.push({role:'u',txt:text}); }
+      if(say){ a.push({role:'t',txt:say}); }
+      tmem.set(session,(Math.max(0),(a.slice(-14))));
+      return out;
+    } catch(e){ last=e; }
+  }
+  throw last||new Error('No free model responded');
+}
+
 function serve(req,res) {
   const pathname = req.url.split('?')[0];
   const file = pathname === '/' ? 'index.html' : pathname.replace(/^\//,'');
@@ -422,6 +494,15 @@ const server=http.createServer((req,res)=>{
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await agentTurn(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
   }
+  // Agentic orchestrator loop turn (model writes speech + picks page tool)
+  if (req.method==='POST' && route==='/api/orch') {
+    if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
+    if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>6000) req.destroy();});
+    req.on('end',async()=>{try {send(res,200,await orch(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
+  }
+  // List selectable neural voices for the picker
+  if (req.method==='GET' && route==='/api/voices') return send(res,200,{voices:VOICE_OPTIONS});
   // Human neural TTS (Edge-TTS). Returns base64 mp3. Cached server+client side.
   if (req.method==='POST' && route==='/api/tts') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});

@@ -31,8 +31,10 @@ const talkMemory=[];
 function rememberLine(text){ talkMemory.push({text, at:Date.now()}); if(talkMemory.length>40) talkMemory.shift(); }
 function saidRecently(text, withinMs=8500){ const t=text.trim().toLowerCase(); return talkMemory.some(m=> (Date.now()-m.at)<withinMs && m.text.trim().toLowerCase()===t); }
 function base64ToBlob(b64){ const bin=atob(b64), buf=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i); return new Blob([buf],{type:'audio/mpeg'}); }
+let voiceSel = localStorage.getItem('wordCraftVoiceSel')||'en-US-AriaNeural';
+function friendlyVoice(v){ const map={'en-US-AriaNeural':'Aria (female)','en-US-GuyNeural':'Guy (male)','en-US-JennyNeural':'Jenny (female)','en-US-EmmaNeural':'Emma (female)','en-US-BrianNeural':'Brian (male)','en-US-AvaNeural':'Ava (female)','en-US-AndrewMultilingualNeural':'Andrew (male)','en-US-ChristopherNeural':'Christopher (male)','en-US-MichelleNeural':'Michelle (female)','en-US-EricNeural':'Eric (male)'}; return map[v]||v; }
 async function fetchTTS(text){
-  try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
+  try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, voice:voiceSel})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
 }
 let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
 function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); } }
@@ -191,17 +193,35 @@ function tutorLine(w, moment){
   if(moment==='empty'){ return `Nothing's here. Say reset or tweak the filters and we'll find words.`; }
   return '';
 }
-// Speak a natural teaching line tied to the current card.
-function narrate(moment, force){
+// Speak a natural teaching line tied to the current card (orchestrator-model written).
+function narrate(moment){
   const w=cur()?.word; if(!w)return;
-  const line=tutorLine(w, moment); if(!line)return;
-  speak(line, {});
+  orchSay({moment}, w);
 }
 // Narrate for an arbitrary word (deep-dive etc).
 function narrateOn(moment, w){
   if(!tutorLive||!VOICE.on||!w)return;
-  const line=tutorLine(w, moment); if(!line)return;
-  speak(line, {});
+  orchSay({moment}, w);
+}
+// Ask the orchestrator to write a natural line + may act. Model picks action.
+let orchToken=0;
+async function orchSay(payload, w){
+  if(!tutorLive&&payload&&!payload.text)return;
+  const ww = w || cur()?.word; if(!ww)return;
+  const tok=++orchToken;
+  const body={ session:VOICE.sessionID, text:payload.text||'', moment:payload.moment||'',
+    word:ww.word, definition:ww.aiDefinition||ww.definition||'', pos:ww.partOfSpeech||'',
+    example:ww.example||'', synonyms:ww.synonyms||[], antonyms:ww.antonyms||[],
+    screen:currentScreen(), options:currentOptions(), tools:currentTools(),
+    stats:`streak ${tutorState.streak}, consecutiveMiss ${tutorState.consecutiveMiss}, review ${Object.keys(wrong).length}` };
+  try{
+    const r=await fetch('/api/orch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok)return; const d=await r.json();
+    if(tok!==orchToken)return; // stale (a newer narration superseded this)
+    if(d.say) speak(d.say, {});
+    if(d.action && d.action!=='none') await runAction({action:d.action,index:d.index,verdict:d.verdict,narration:d.say||'',say:d.say||''});
+    else if(VOICE.micOn) setVoiceState('listening');
+  }catch(e){}
 }
 // ---- always-on proactive tutoring toggle (speak the word on card transitions) ----
 let tutorLive=false; function setTutorLive(v){ tutorLive=!!v; }
@@ -211,7 +231,7 @@ function sayOnCardChange(){
   const c=cur(); if(!c||!c.word)return;
   const key=c.type+'|'+c.word.word;
   if(narrGuard===key)return; narrGuard=key;
-  speak(c.type==='relearn'?tutorLine(c.word,'relearn'):c.type==='test'?tutorLine(c.word,'question'):tutorLine(c.word,'learn'));
+  orchSay({moment: c.type==='relearn'?'relearn' : c.type==='test'?'question':'learn'}, c.word);
   scheduleNudge(c.type);
 }
 
@@ -219,9 +239,11 @@ function sayOnCardChange(){
 async function agentDecide(text){
   const w=currentWord();
   try{
-    const r=await fetch('/api/agent',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({session:VOICE.sessionID, screen:currentScreen(), word:w?.word||'', pos:w?.partOfSpeech||'',
-        definition:w?(w.aiDefinition||w.definition||''):'', options:currentOptions(), tools:currentTools(), text, memory:true})});
+    const r=await fetch('/api/orch',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session:VOICE.sessionID, text, screen:currentScreen(), word:w?.word||'', pos:w?.partOfSpeech||'',
+        definition:w?(w.aiDefinition||w.definition||''):'', options:currentOptions(), tools:currentTools(),
+        example:w?.example||'', synonyms:w?.synonyms||[], antonyms:w?.antonyms||[],
+        stats:`streak ${tutorState.streak}, consecutiveMiss ${tutorState.consecutiveMiss}`})});
     if(!r.ok)return null; return await r.json();
   }catch(e){return null}
 }
@@ -240,8 +262,8 @@ async function runAction(d){
     case 'repeat': speak(w?(w.word+' — '+(w.aiDefinition||w.definition||'')):(n||'Repeating.')); break;
     case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Slower');break;
     case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Faster.');break;
-    case 'reveal': showFlip(); if(!tutorLive) speak(n||w?(w.word+' means '+(w.aiDefinition||w.definition||'')):'Here it is.'); break;
-    case 'deep_dive': if(w)openCraft(w); if(n)speak(n); break;
+    case 'reveal': showFlip(); if(d.say) speak(d.say,{}); else if(!tutorLive&&w) speak(w.word+' means '+(w.aiDefinition||w.definition||'')); break;
+    case 'deep_dive': if(w)openCraft(w); if(d.say)speak(d.say,{}); else if(n)speak(n); break;
     case 'options': speak(n||(currentOptions().length?currentOptions().map((o,i)=>'Option '+String.fromCharCode(65+i)+'. '+o).join(' '):'You can say next, back, skip, reveal, or help.')); break;
     case 'help': speak(n||'You can say next, back, skip, reveal, deep dive, or ask me anything.'); break;
     case 'review': showPage('review'); break;
@@ -274,7 +296,7 @@ async function handleUtterance(text){
   if(agentBusy)return; agentBusy=true;
   const d=await agentDecide(text); agentBusy=false;
   setVoiceState('listening');
-  if(d) await runAction({action:d.action,index:d.index,verdict:0,query:d.query||'',narration:d.narration||''});
+  if(d) await runAction({action:d.action,index:d.index,verdict:d.verdict??0,query:d.query||'',narration:d.say||d.narration||'',say:d.say||''});
   else speak("I didn't catch that. Say help.");
   // re-listening handled by state
   if(VOICE.micOn) setVoiceState('listening');
@@ -313,6 +335,7 @@ function initVoiceUI(){
   const toggle=()=>toggleMic(!VOICE.micOn);
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
+  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; vs.innerHTML=d&&d.voices?d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''):vs.innerHTML; vs.value=voiceSel; }).catch(()=>{}); vs.onchange=e=>{ localStorage.setItem('wordCraftVoiceSel',vs.value); voiceSel=vs.value; }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
   setVoiceState('off');
