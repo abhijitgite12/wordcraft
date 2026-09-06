@@ -326,6 +326,23 @@ $('#close-craft').onclick=()=>$('#craft-panel').classList.remove('open');
 async function askCraft(q){let x=craftWord||words.find(w=>w.word===curWord)||pick();$('#craft-body').innerHTML='<p>✦ thinking…</p>';try{let r=await fetch('/api/genie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word:x.word,definition:x.definition,mode:q})});let d=await r.json();if(!r.ok)throw Error(d.error);$('#craft-body').innerHTML=`<div class="answer"><button class="quick-back" id="quick-back">← Quick questions</button><div class="direct-answer"><span class="answer-kicker">ANSWER</span><p>${highlightIn(x.word,d.directAnswer||d.explanation||'')}</p></div><div class="block"><strong>Plain English</strong><br>${highlightIn(x.word,d.explanation||'')}</div><div class="block"><strong>Try it</strong><br><i>${highlightIn(x.word,d.example||'')}</i></div><div class="block"><strong>Memory hook</strong><br>${highlightIn(x.word,d.memoryHook||'')}</div><div class="block"><strong>Think deeper</strong><br>${highlightIn(x.word,d.deeperQuestion||'')}</div><div class="block"><strong>Context</strong><br>${highlightIn(x.word,d.contextNote||'')}</div><div class="block"><strong>Related</strong><br><span class="syn">${esc((d.synonyms||[]).map(s=>'↗ '+s).join('  '))}</span> <span class="ant">${esc((d.antonyms||[]).map(a=>'↘ '+a).join('  '))}</span></div></div>`;document.getElementById('quick-back').onclick=()=>openCraft(x)}catch(e){$('#craft-body').innerHTML=`<p class="bad-q">Deep Dive is taking a tiny break: ${esc(e.message)}</p><p>Your flashcards still work without AI.</p>`}}
 $('#craft-form').onsubmit=e=>{e.preventDefault();let q=$('#craft-input').value.trim();if(q){$('#craft-input').value='';askCraft(q)}};document.addEventListener('click',e=>{let b=e.target.closest('[data-ask]');if(b)askCraft(b.dataset.ask)});
 let fontSize=Number(localStorage.getItem('wordCraftFont')||135);function applyFontSize(){fontSize=Math.max(85,Math.min(140,fontSize));document.documentElement.style.setProperty('--fs',fontSize/100);$('#fs-label').textContent=fontSize+'%';try{localStorage.setItem('wordCraftFont',fontSize)}catch(e){}}$('#fs-minus').onclick=e=>{e.stopPropagation();fontSize-=10;applyFontSize()};$('#fs-plus').onclick=e=>{e.stopPropagation();fontSize+=10;applyFontSize()};
+// ---- version / about badge ----
+const vbtn=$('#version-btn'), vpop=$('#version-pop'), vbody=$('#vp-body'), vclose=$('#vp-close');
+function showAbout(){
+  vpop.hidden=false; vbody.innerHTML='Loading…';
+  fetch('/api/version').then(r=>r.ok?r.json():null).then(v=>{
+    if(!v) throw 0;
+    const d=new Date(v.deployDate), now=new Date(v.started);
+    const fmt=(d)=>d.toLocaleString([],{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    const short=(c)=>{c=c||'';return c&&c!=='dev'?(c.length>10?c.slice(0,7):c):(c||'dev');};
+    vbody.innerHTML=`<div class="vr">Commit <b>${esc(short(v.commit))}</b></div><div class="vr">Branch <b>${esc(v.branch||'—')}</b></div><div class="vr">Deployed <b>${esc(fmt(d))}</b></div><div class="vr">Server up <b>${esc(fmt(now))}</b></div>`;
+  }).catch(()=>{vbody.textContent='No version info available.'});
+}
+function toggleAbout(){ if(vpop.hidden)showAbout(); vpop.hidden=!vpop.hidden; }
+if(vbtn)vbtn.onclick=e=>{e.stopPropagation();toggleAbout();};
+if(vclose)vclose.onclick=()=>{vpop.hidden=true;};
+if(vpop)vpop.onclick=e=>{ if(e.target===vpop)vpop.hidden=true; };
+document.addEventListener('click',e=>{ if(vpop&&!e.target.closest('#version-btn')&&!e.target.closest('.version-pop')) vpop.hidden=true; });
 $('#theme-button').onclick=e=>{$('#theme-menu').classList.toggle('open');e.stopPropagation()};$$('.theme-menu [data-theme]').forEach(b=>b.onclick=()=>{document.body.dataset.theme=b.dataset.theme;localStorage.setItem('satSparkTheme',b.dataset.theme);$('#theme-menu').classList.remove('open')});document.addEventListener('click',e=>{if(!e.target.closest('.header-actions'))$('#theme-menu').classList.remove('open')});
 // Real classical recordings from Wikimedia Commons. Compositions are public domain;
 // individual recordings carry the credit/license shown in the sound menu.

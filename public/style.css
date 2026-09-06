@@ -41,3 +41,13 @@ header{position:relative}
 .voice-caption.assistant::before{content:"Voice: ";color:var(--purple);font-weight:700}
 .voice-fallback{margin:4px auto 12px;display:none}
 @media(max-width:600px){.voice-caption{right:12px}}
+/* ---- version / about badge ---- */
+.about-button{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:7px 11px;cursor:pointer;font-size:13px;font-weight:700;color:var(--purple);line-height:1}
+.about-button:hover{background:var(--lav)}
+.version-pop{position:absolute;right:8px;top:calc(100% + 4px);width:min(280px,86vw);background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 14px 40px #30266b26;z-index:60;overflow:hidden}
+.version-pop[hidden]{display:none}
+.vp-head{display:flex;justify-content:space-between;align-items:center;background:var(--lav);padding:10px 14px;font-size:12px;color:var(--purple)}
+.vp-head button{border:0;background:none;font-size:18px;color:var(--muted);cursor:pointer;line-height:1}
+.vp-body{padding:12px 14px;font-size:12px;color:var(--ink);display:flex;flex-direction:column;gap:7px}
+.vp-body .vr{line-height:1.4}
+.vp-body b{color:var(--purple);font-family:ui-monospace,monospace;font-size:11px;background:var(--lav);border-radius:5px;padding:1px 5px}

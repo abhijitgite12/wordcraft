@@ -6,6 +6,21 @@ const { DuckDBInstance } = require('@duckdb/node-api');
 
 const PORT = process.env.PORT || 4173;
 const ROOT = __dirname;
+// ---- build / deploy info (shown in the about badge) ----
+function buildInfo(){
+  // Prefer Render's injected env (set automatically on every deploy):
+  const rCommit=process.env.RENDER_GIT_COMMIT, rBranch=process.env.RENDER_GIT_BRANCH;
+  const fallback={commit:process.env.BUILD_COMMIT||rCommit||'dev', branch:process.env.BUILD_BRANCH||rBranch||'', deployDate:process.env.RENDER_DEPLOY_DATE||new Date().toISOString(), started:Date.now()};
+  // honor explicit overrides, else git HEAD if available (local dev)
+  try{
+    const g=require('child_process').execFileSync('git',['rev-parse','--short','HEAD'],{cwd:ROOT,encoding:'utf8',timeout:2000}).trim();
+    if(!fallback.commit||fallback.commit==='dev') fallback.commit=g;
+    let b=''; try{ b=require('child_process').execFileSync('git',['branch','--show-current'],{cwd:ROOT,encoding:'utf8',timeout:2000}).trim(); }catch(e){}
+    if(b) fallback.branch=b;
+  }catch(e){}
+  return fallback;
+}
+const BUILD = buildInfo();
 const WORDS_PATH = path.join(ROOT, 'words.json');
 let words = JSON.parse(fs.readFileSync(WORDS_PATH, 'utf8'));
 
@@ -351,6 +366,7 @@ const server=http.createServer((req,res)=>{
     return send(res,401,{error:'unauthorized'});
   }
   if (req.method==='GET' && route==='/api/words') return send(res,200,{words});
+  if (req.method==='GET' && route==='/api/version') return send(res,200,BUILD);
   if (req.method==='POST' && route==='/api/search') {
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>2000) req.destroy();});
     req.on('end',async()=>{try{const {q=''}=JSON.parse(raw||'{}');send(res,200,{results:await searchDb(String(q).slice(0,60))})}catch(e){send(res,500,{error:e.message})}}); return;
