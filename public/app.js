@@ -138,13 +138,17 @@ function stopSpeak(){ stopAllAudio(); if(guideTimer){clearTimeout(guideTimer);gu
 function localFastpath(text){
   const t=String(text||'').toLowerCase().trim(); if(!t)return null;
   if(/\b(stop|cancel|quiet|shut up)\b/.test(t))return {tool:'stop'};
+  let m=t.match(/\b(?:load|show|open|bring up|go to|teach me|study)\s+(?:the\s+)?word\s+([a-z][a-z-]{1,30})/); if(m)return {tool:'load_word',query:m[1]};
+  m=t.match(/\b(?:test|quiz)\s+me\s+(?:on|with|from)?\s*(?:the\s+)?([a-z]+)\s*(?:words|vocab|vocabulary|category)?/); if(m&&/^(gre|sat|core|academic|general|common)$/.test(m[1]))return {tool:'test_category',query:m[1]};
+  m=t.match(/\b(?:load|show|open|go to)\s+([a-z][a-z-]{2,30})\b/); if(m)return {tool:'load_word',query:m[1]};
+  return null;
   if(/\b(mute|voice off|turn off voice|silence)\b/.test(t))return {tool:'mute'};
   if(/\b(unmute|voice on|turn on voice)\b/.test(t))return {tool:'voice_on'};
   return null;
 }
 // ---- page context for the agent ----
 function currentTools(){
-  const c=cur(); const base=['next','back','skip','repeat','slow','fast','options','help','mute','voice_on','stop'];
+  const c=cur(); const base=['next','back','skip','repeat','slow','fast','options','help','load_word','test_category','mute','voice_on','stop'];
   if(!c||c.type==='empty')return ['next','back','repeat','help','mute','voice_on','stop'];
   if(c.type==='test')return [...base,'answer_option','answer_meaning','reveal'];
   if(c.type==='relearn')return [...base,'reveal','deep_dive','yes','no'];
@@ -255,6 +259,8 @@ async function runAction(d){
   switch(d.action){
     case 'next': move(1); break;
     case 'back': move(-1); break;
+    case 'load_word': case 'search': loadWordCard(d.query, d.say); break;
+    case 'test_category': startCategoryTest(d.query, d.say); break;
     case 'skip': move(1); break;
     case 'stop': stopSpeak(); setVoiceState(VOICE.micOn?'listening':'off'); return;
     case 'repeat': speak(w?(w.word+' — '+(w.aiDefinition||w.definition||'')):(n||'Repeating.')); break;
@@ -297,6 +303,9 @@ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   // through the page-aware agent so natural phrases can select the right tool.
   if(local && ['stop','mute','voice_on'].includes(local.tool)){
     setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''});
+  }
+  if(local && ['load_word','test_category'].includes(local.tool)){
+    setVoiceState('listening'); return runAction({action:local.tool,query:local.query,narration:'',say:''});
   }
   if(agentBusy)return; agentBusy=true;
   const d=await agentDecide(text); agentBusy=false;
@@ -491,4 +500,42 @@ function fuzzyResults(q){const query=q.toLowerCase().trim(),tokens=query.split(/
 function dbSearch(q){const m=fuzzyResults(q);$('#word-list').innerHTML=m.map(w=>`<div class="word-row" data-w="${esc(w.word)}"><b>${esc(w.word)}</b>${catTag(w)}${lvlBadge(w)}<span>${esc(displayDef(w))}</span></div>`).join('')||'<p class="search-empty">No close matches yet — try a shorter clue.</p>'}
 function studyWord(x){if(!x)return;showPage('learn');feed=[{type:'teach',word:x},{type:'test',word:x}];fi=0;render()}
 $('#search').oninput=async e=>{let q=e.target.value.trim();if(q.length>=2)dbSearch(q);else renderList()};$('#word-list').onclick=e=>{let r=e.target.closest('[data-w]');if(r)studyWord(words.find(w=>w.word===r.dataset.w))};$('#review-list').onclick=e=>{let r=e.target.closest('[data-review]');if(r)studyWord(words.find(w=>w.word===r.dataset.review))};
-(async()=>{let r=await fetch('/api/words');words=(await r.json()).words;hydrateLocal();hydrateDefinitions();wrong=JSON.parse(localStorage.getItem('satSparkWrong')||'{}');seen=JSON.parse(localStorage.getItem('satSparkSeen')||'{}');score=+localStorage.getItem('satSparkScore')||0;mix=localStorage.getItem('satSparkMix')||'mixed';cat=localStorage.getItem('satSparkCat')||'all';document.body.dataset.theme=localStorage.getItem('satSparkTheme')||'sunrise';applyFontSize();if(musicWanted){$('#sound-button').textContent='🔊';$('#sound-button').classList.add('on')}$$('#mix-chips button').forEach(b=>b.classList.toggle('on',b.dataset.mix===mix));$$('#cat-chips button').forEach(b=>b.classList.toggle('on',b.dataset.cat===cat));const requested=new URLSearchParams(location.search).get('w');if(requested){const shared=words.find(w=>w.word.toLowerCase()===requested.toLowerCase());if(shared){feed=[{type:'teach',word:shared},{type:'test',word:shared}];fi=0}}ensureFeed();render();renderList();initVoiceUI();tele('load','app booted',JSON.stringify({view:"WD-app",hasBtn:!!document.getElementById('version-btn'),hasVoice:typeof orchSay==='function',hasTTS:!!navigator.userAgent,voiceSel:(typeof voiceSel==='string'?voiceSel:'')}))})().catch(e=>console.error(e));
+(async()=>{let r=await fetch('/api/words');words=(await r.json()).words;hydrateLocal();hydrateDefinitions();wrong=JSON.parse(localStorage.getItem('satSparkWrong')||'{}');seen=JSON.parse(localStorage.getItem('satSparkSeen')||'{}');score=+localStorage.getItem('satSparkScore')||0;mix=localStorage.getItem('satSparkMix')||'mixed';cat=localStorage.getItem('satSparkCat')||'all';document.body.dataset.theme=localStorage.getItem('satSparkTheme')||'sunrise';applyFontSize();if(musicWanted){$('#sound-button').textContent='🔊';$('#sound-button').classList.add('on')}$$('#mix-chips button').forEach(b=>b.classList.toggle('on',b.dataset.mix===mix));$$('#cat-chips button').forEach(b=>b.classList.toggle('on',b.dataset.cat===cat));const requested=new URLSearchParams(location.search).get('w');if(requested){const shared=words.find(w=>w.word.toLowerCase()===requested.toLowerCase());if(shared){feed=[{type:'teach',word:shared},{type:'test',word:shared}];fi=0}}ensureFeed();render();renderList();initVoiceUI();tele('load','app booted',JSON.stringify({view:"WD-app",hasBtn:!!document.getElementById('version-btn'),hasVoice:typeof orchSay==='function',hasTTS:!!navigator.userAgent,voiceSel:(typeof voiceSel==='string'?voiceSel:'')}))})().catch(e=>console.error(e));// ---- tutor tool: load a specific word as the current flashcard ----
+function findWord(q){const t=String(q||'').toLowerCase().trim().replace(/[^a-z-]/g,'');if(!t)return null;
+  return words.find(w=>w.word.toLowerCase()===t)||words.find(w=>w.word.toLowerCase().startsWith(t))||words.find(w=>w.word.toLowerCase().includes(t))||null}
+function loadWordCard(q,say){const w=findWord(q);if(!w){speak(say||`I couldn't find ${q||'that word'} in our set. Try another word.`);return}
+  recordInteraction('tool','load_word:'+w.word);studyWord(w);
+  if(say)speak(say,{});else speak('Here is '+w.word+'. Tap the card when you are ready to see what it means.')}
+// ---- tutor tool: quick quiz on a category of words ----
+function categoryKey(q){const t=String(q||'').toLowerCase();
+  if(/\bgre\b/.test(t))return 'gre';if(/\bsat\b|high frequen/.test(t))return 'sat-hf';
+  if(/\bcore\b/.test(t))return 'core';if(/\bacademic\b/.test(t))return 'academic';return 'general'}
+function startCategoryTest(q,say){const key=categoryKey(q);
+  const pool=words.filter(w=>(w.categories||[w.category]).includes(key));
+  if(!pool.length){speak(say||`I don't have a ${q||key} category in the word set.`);return}
+  const picks=pool.slice().sort(()=>Math.random()-.5).slice(0,5);
+  feed=picks.map(w=>({type:'test',word:w}));fi=0;render();
+  recordInteraction('tool','test_category:'+key);
+  speak(say||('Quick test on '+key.replace('sat-hf','SAT high-frequency')+' words — five of them, starting now.'))}
+// ---- top-center search bar: type a word, it becomes the flashcard ----
+function topSearchResults(q){const t=q.toLowerCase().trim();if(t.length<2)return [];
+  const catHit=/^(gre|sat|core|academic|general)\b/.test(t);
+  const hits=words.filter(w=>w.word.toLowerCase().includes(t)).sort((a,b)=>{const a0=a.word.toLowerCase().startsWith(t)?0:1,b0=b.word.toLowerCase().startsWith(t)?0:1;return a0-b0||a.word.length-b.word.length}).slice(0,catHit?4:8);
+  const out=hits.map(w=>({w,label:w.word}));
+  if(catHit)out.unshift({cat:/^gre/.test(t)?'gre':/^sat/.test(t)?'sat-hf':/^core/.test(t)?'core':/^academic/.test(t)?'academic':'general',label:t.toUpperCase()+' words'});
+  return out}
+function wireTopSearch(){const inp=$('#top-search'),box=$('#ts-results');if(!inp||!box)return;
+  const close=()=>{box.hidden=true};
+  inp.addEventListener('input',()=>{const r=topSearchResults(inp.value);
+    box.innerHTML=r.map(x=>`<div class="ts-row" data-word="${x.w?esc(x.w.word):''}" data-cat="${x.cat||''}">${x.cat?'⚡ <b>'+esc(x.label)+'</b> <small>start a quick quiz</small>':'<b>'+esc(x.label)+'</b><small>'+esc(displayDef(x.w)).slice(0,60)+'…</small>'}</div>`).join('')||'';
+    box.hidden=!r.length});
+  inp.addEventListener('keydown',e=>{if(e.key!=='Enter')return;e.preventDefault();const t=inp.value.trim();if(!t)return;
+    const m=/^(gre|sat|core|academic|general)\b/.exec(t.toLowerCase());
+    if(m){startCategoryTest(m[1]);inp.value='';close();return}
+    const w=findWord(t);if(w){loadWordCard(t);inp.value='';close()}});
+  box.addEventListener('pointerdown',e=>{const r=e.target.closest('.ts-row');if(!r)return;
+    if(r.dataset.cat){startCategoryTest(r.dataset.cat)}else if(r.dataset.word){loadWordCard(r.dataset.word)}
+    inp.value='';close()});
+  document.addEventListener('click',e=>{if(!e.target.closest('.top-search'))close()});
+}
+wireTopSearch();

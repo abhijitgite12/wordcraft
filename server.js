@@ -125,14 +125,15 @@ async function searchDb(q) {
 // Low-cost paid OpenRouter models. The existing OPENROUTER_API_KEY is reused.
 // Primary is optimized for short tool-routing and tutor turns; fallbacks keep AI resilient.
 const models = [
-  'google/gemma-4-31b-it:free',
-  'minimax/minimax-m3:free',
-  'z-ai/glm-5.2:free'
+  'qwen/qwen3.8-flash',
+  'deepseek/deepseek-v4-flash-0731',
+  'google/gemini-3.7-flash'
 ];
+// NOTE: freeModels intentionally mirrors models (cheap paid works, and keeps auto-failover tier uniform).
 const freeModels = [
-  'google/gemma-4-31b-it:free',
-  'minimax/minimax-m3:free',
-  'z-ai/glm-5.2:free'
+  'qwen/qwen3.8-flash',
+  'deepseek/deepseek-v4-flash-0731',
+  'google/gemini-3.7-flash'
 ];
 const PAID_PROBE_MS = 60*60*1000;
 let paidDisabledUntil = 0;
@@ -397,7 +398,7 @@ Return valid JSON ONLY with keys: action, index (number 0-3 or null), verdict (0
 }
 // ---- Agentic orchestrator: proactive AND reactive turns in one loop step. ----
 // The model writes natural spoken lines AND returns a page action (tool).
-const ORCH_ACTIONS=['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','yes','no','mute','voice_on','stop','none'];
+const ORCH_ACTIONS=['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','load_word','test_category','yes','no','mute','voice_on','stop','none'];
 const tmem=new Map();
 async function orch(body){
   if(!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
@@ -409,11 +410,13 @@ async function orch(body){
   const syn=Array.isArray(body.synonyms)?body.synonyms.map(clean).slice(0,3).join(', '):'';
   const ant=Array.isArray(body.antonyms)?body.antonyms.map(clean).slice(0,2).join(', '):'';
   const opts=Array.isArray(body.options)?body.options.map(clean).slice(0,4):[];
+  const query=clean(body.query||'');
   const screen=clean(body.screen||'teach');
   const stats=clean(body.stats||'');
   const history=Array.isArray(body.history)?body.history.slice(-16).map(x=>clean(JSON.stringify(x))).join('\n'):'(no interaction history)';
   const tools=Array.isArray(body.tools)?body.tools.filter(t=>ORCH_ACTIONS.includes(t)):[];
-  const toolMeaning={next:'advance to the next learning card or step',back:'return to the previous card or step',skip:'skip this word without marking it wrong',repeat:'re-say or revisit the current teaching point',slow:'slow the tutor voice',fast:'speed up the tutor voice',reveal:'show or explain the hidden meaning',answer_option:'submit one of the visible quiz choices using index',answer_meaning:'judge the learner\'s spoken definition',deep_dive:'open or continue a deeper exploration of this word',dd_ask:'answer the learner\'s deeper question',options:'read or explain the choices currently visible',help:'explain the useful actions in this current state',review:'open the review deck',browse:'open the word bank',search:'search the word bank',yes:'accept the pending confirmation',no:'decline the pending confirmation',mute:'turn tutor voice off',voice_on:'turn tutor voice on',stop:'stop current speech'};
+  const ql=query?(' The learner also referenced: "'+query+'" (use it as query for load_word/test_category/search).'):'';
+  const toolMeaning={next:'advance to the next learning card or step',back:'return to the previous card or step',skip:'skip this word without marking it wrong',repeat:'re-say or revisit the current teaching point',slow:'slow the tutor voice',fast:'speed up the tutor voice',reveal:'show or explain the hidden meaning',answer_option:'submit one of the visible quiz choices using index',answer_meaning:'judge the learner\'s spoken definition',deep_dive:'open or continue a deeper exploration of this word',dd_ask:'answer the learner\'s deeper question',options:'read or explain the choices currently visible',help:'explain the useful actions in this current state',review:'open the review deck',browse:'open the word bank',search:'search the word bank (put the search text in query; a matching word becomes the flashcard)',load_word:'load one specific word as the current flashcard by name (put the word in query), e.g. the learner asks to study "elucidate"',test_category:'start a quick quiz on a category of words (put the category in query: gre, sat, core, academic, or general), e.g. "test me on GRE words"',yes:'accept the pending confirmation',no:'decline the pending confirmation',mute:'turn tutor voice off',voice_on:'turn tutor voice on',stop:'stop current speech'};
   const tl=tools.length?tools.map(t=>t+' = '+(toolMeaning[t]||'page action')).join('; '):'page actions are unavailable';
   const m=tmem.get(session)||[];
   const hist=m.slice(-8).map(x=>x.role==='u'?'User: '+x.txt:'Tutor: '+x.txt).join('\n')||'(fresh session)';
@@ -442,11 +445,12 @@ ${hist}
 Recent learner/page interaction timeline (includes correct/incorrect answers, navigation, taps/voice tools):
 ${history}
 
-${job}
+${job}${ql}
 
 Reply ONLY valid JSON:
 {"say":"<short natural spoken line, 1-3 sentences, <55 words, in your tutor voice>",
  "action":"<pick one tool from the tools list, or 'none'>",
+ "query":"<word or category for load_word / test_category / search, else empty string>",
  "index":<0-3 if learner chose an option, else null>,
  "verdict":<0 wrong / 1 close / 2 correct when grading a spoken meaning, else null>,
  "done":<true if now wait for the learner, false if continue acting>}
@@ -454,20 +458,24 @@ Interpret the learner's meaning from the current screen, card content, available
   let last;
   for (const model of modelPool()) {
     try {
-      const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:180})});
+      const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:400})});
       const j=await r.json(); if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
       observeModelSuccess(model);
       let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
-      const p=JSON.parse(str);
+      let p; try{ p=JSON.parse(str); }catch(_){ // tolerate a truncated reply: close open strings/objects
+        try{ let s=str.replace(/"(\\.|[^"\\])*$/,'"').replace(/,\s*$/,''); if(!/[}\]\"]$/.test(s))s+='"'; if(!/}$/.test(s))s+='}'; p=JSON.parse(s); }
+        catch(_2){ throw new Error('unparseable reply'); } }
       const action=ORCH_ACTIONS.includes(p.action)?p.action:'none';
       const say=clean(p.say||'').slice(0,220);
-      const out={action, say, index:(Number.isInteger(p.index)&&p.index>=0&&p.index<=3)?p.index:null, verdict:([0,1,2].includes(p.verdict)?p.verdict:null), done:(p.done!==false), model};
+      const out={action, say, query:(clean(p.query||'').slice(0,60)), index:(Number.isInteger(p.index)&&p.index>=0&&p.index<=3)?p.index:null, verdict:([0,1,2].includes(p.verdict)?p.verdict:null), done:(p.done!==false), model};
+      // Decision log: proves in the server logs what the tutor decided to DO on the page.
+      console.log(`[orch] session=${session} text="${text}" moment=${moment||'-'} -> action=${action}${out.query?` query="${out.query}"`:''} model=${model}`);
       const a=tmem.get(session)||[];
       if(text){ a.push({role:'u',txt:text}); }
       if(say){ a.push({role:'t',txt:say}); }
       tmem.set(session,(Math.max(0),(a.slice(-14))));
       return out;
-    } catch(e){ last=e; }
+    } catch(e){ last=e; console.log(`[orch] model ${model} failed: ${e.message}`); }
   }
   console.log('[ai] orch fell back to local:',String(last&&last.message||last).slice(0,140));
   // Graceful fallback: if the free model is down, still say something useful from the word's data.

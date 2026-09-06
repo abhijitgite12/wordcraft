@@ -73,3 +73,14 @@ body.v-off{background:radial-gradient(circle at 60% 0,rgba(0,0,0,.02),transparen
 .voice-button{margin-left:6px}
 .voice-button.on{background:var(--mint);border-color:#82c29d;box-shadow:0 0 0 3px #82c29d33}
 .voice-button:not(.on){opacity:.75}
+/* ---- top-center word search ---- */
+.top-search{position:relative;max-width:420px;margin:4px auto 2px;z-index:50}
+.top-search .ts-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none}
+.top-search input{width:100%;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:9px 16px 9px 34px;font-size:13px;box-shadow:0 6px 18px #30266b12;outline:none}
+.top-search input:focus{border-color:var(--purple)}
+.ts-results{position:absolute;left:0;right:0;top:calc(100% + 6px);background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:0 14px 34px #30266b22;overflow:hidden;z-index:60}
+.ts-row{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--line)}
+.ts-row:last-child{border-bottom:0}
+.ts-row:hover{background:var(--lav)}
+.ts-row small{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:600px){.top-search{margin:2px 12px 0}}
