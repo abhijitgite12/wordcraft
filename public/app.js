@@ -129,7 +129,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false}={}){
   }
 }
 function saidRecently(text){ const n=String(text||'').trim().toLowerCase(); const now=Date.now(); return talkMemory.some(m=>now-m.at<9000 && m.text.trim().toLowerCase()===n); }
-function stopSpeak(){ stopAllAudio(); }
+function stopSpeak(){ stopAllAudio(); if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} }
 
 
 // ---- local reflexive fast-path (zero network) ----
@@ -193,6 +193,7 @@ function narrateOn(moment, w){
 // Ask the orchestrator to write a natural line + may act. Model picks action.
 let orchToken=0, orchBusy=false, lastOrchAt=0, lastOrchKey='';
 async function orchSay(payload, w){
+  if(!VOICE.on||!VOICE.micOn) return;        // voice off => zero orchestrator/network calls
   if(orchBusy) return;                       // never stack orchestrator turns
   const now=Date.now(); if(now-lastOrchAt<2200) return;  // natural pacing, avoids runaway loops
   lastOrchAt=now;
