@@ -391,7 +391,7 @@ function showAbout(){
     vbody.innerHTML=`<div class="vr"><b>Version</b> ${esc(shortc(v.commit))}</div><div class="vr"><b>Branch</b> ${esc(v.branch||'—')}</div><div class="vr"><b>Released</b> ${esc(fmt(rel))}</div><div class="vr"><b>Server up</b> ${esc(fmt(now))}</div>`;
   }).catch(()=>{vbody.textContent='No version info available.'});
 }
-function toggleAbout(){ if(vpop.hidden)showAbout(); vpop.hidden=!vpop.hidden; }
+function toggleAbout(){ const showing=!vpop.hidden; if(!showing){ showAbout(); vpop.hidden=false; } else { vpop.hidden=true; } }
 if(vbtn)vbtn.onclick=e=>{e.stopPropagation();toggleAbout();};
 if(vclose)vclose.onclick=()=>{vpop.hidden=true;};
 if(vpop)vpop.onclick=e=>{ if(e.target===vpop)vpop.hidden=true; };
