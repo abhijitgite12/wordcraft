@@ -32,7 +32,7 @@ function setVoiceCaption(text,asAssistant){
   cap.classList.toggle('hidden',!text);
 }
 // ---- serialized human-voice speech (Edge-TTS) with native fallback ----
-const humanVoice = { on: localStorage.getItem('wordCraftHuman')!=='off' }; // default ON
+const humanVoice = { on: localStorage.getItem('wordCraftHuman')==='on' }; // default OFF = fast native voice (on = premium Edge-TTS)
 // ---- smart "know when to speak" memory: track recent tutor lines so it never repeats itself ----
 const talkMemory=[];
 function rememberLine(text){ talkMemory.push({text, at:Date.now()}); if(talkMemory.length>40) talkMemory.shift(); }
@@ -45,10 +45,21 @@ async function fetchTTS(text){
 }
 let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
 const ttsPlayer = document.createElement('audio'); ttsPlayer.preload='auto'; ttsPlayer.muted=true; (ttsPlayer.muted=false);
-function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); } }
+function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); return; } if(tutorLive&&VOICE.on&&VOICE.micOn) scheduleGuide(); }
+let _nativeVoice=null;
+function pickNativeVoice(){
+  if(!window.speechSynthesis)return;
+  const vs=window.speechSynthesis.getVoices?window.speechSynthesis.getVoices():[];
+  if(!_nativeVoice && vs.length){
+    _nativeVoice= vs.find(v=>/en-US|en_GB|en-GB/.test(v.lang))|| vs[0] || null;
+  }
+  return _nativeVoice;
+}
 function nativeSpeak(text){
   if(!window.speechSynthesis)return;
+  pickNativeVoice();
   const u=new SpeechSynthesisUtterance(String(text)); u.rate=VOICE.rate; u.pitch=1;
+  if(_nativeVoice)u.voice=_nativeVoice;
   u.onstart=()=>setVoiceState('speaking');
   u.onend=u.onerror=()=>{ finishLine(); };
   setVoiceCaption(String(text),true);
@@ -56,6 +67,27 @@ function nativeSpeak(text){
   window.speechSynthesis.speak(u);
 }
 function nativeStop(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
+let guideTimer=null;
+function scheduleGuide(){
+  if(guideTimer)clearTimeout(guideTimer);
+  guideTimer=setTimeout(()=>{ guideTimer=null; tutorGuideStep(); }, 1400);
+}
+// Guided tutor loop: after narrating, advance the lesson one natural step.
+function tutorGuideStep(){
+  if(!tutorLive||!VOICE.on||!VOICE.micOn)return;
+  if(document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;
+  const c=cur(); if(!c||!c.word)return;
+  const w=c.word; const el=$('#card');
+  if(c.type==='teach' && el && !el.classList.contains('flipped') && !el.classList.contains('swiping')){
+    // introduced the word; now reveal it to teach (guide)
+    showFlip(); return;
+  }
+  if(c.type==='teach' && el && el.classList.contains('flipped')){
+    // just taught the meaning; move on to the question
+    move(1); return;
+  }
+  // test / relearn -> wait for the learner's answer
+}
 function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
 // Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
 async function speak(text,{force=false,human=true,allowRepeat=false}={}){
@@ -236,7 +268,7 @@ async function runAction(d){
   actionReentrant=false;
 }
 // free-spoken meaning: graded by the agent verdict (0 wrong, 1 close, 2 correct)
-function answerFree(verdict, narration){
+function answerFree(verdict, narration){if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} 
   const w=cur()?.word; const note=$('#t-ans');
   if(verdict===2){ delete wrong[w.word]; score++; bumpTutor('correct',w); if(note){note.textContent='✦ Correct. '+(narration||'');note.className='answer-note good';} celebrate(note,false); speak(narration||('Correct! '+w.word+' means '+displayDef(w)+'.')); }
   else if(verdict===1){ if(note){note.textContent='Close — '+(narration||'you have the right idea.')+' The full meaning is '+displayDef(w)+'.';note.className='answer-note good';} speak('Close — '+(narration||('you have the right idea. '+w.word+' means '+displayDef(w)))); }
@@ -245,6 +277,7 @@ function answerFree(verdict, narration){
 }
 // ---- handle an utterance: reflexive local first, else the agent ----
 async function handleUtterance(text){
+if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   text=String(text||'').trim(); if(!text)return;
   if(text===prevUtterance && Date.now()-lastUtteranceAt<1500) return; // ignore recognizer repeats
   prevUtterance=text; lastUtteranceAt=Date.now();
@@ -362,7 +395,7 @@ function showFlip(){let c=$('#card');if(c.querySelector('.face')&&!c.classList.c
 function move(dir){let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
-function answer(btn){let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];bumpTutor('correct',w);btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
+function answer(btn){if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];bumpTutor('correct',w);btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
 const CARD=$('#card');let drag=null,suppressClick=false;
 function dragStart(e){if(e.pointerType&&e.pointerType!=='mouse')return;if(e.button!==undefined&&e.button!==0)return;if(e.target.closest('button,.option'))return;if(CARD.classList.contains('swiping'))return;drag={id:e.pointerId||'mouse',startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastTime:performance.now(),vx:0,moved:false,axisLocked:false};CARD.setPointerCapture?.(e.pointerId);CARD.classList.add('dragging')}
 function dragMove(e){const id=e.pointerId??'touch';if(!drag||id!==drag.id)return;const now=performance.now(),dx=e.clientX-drag.startX,dy=e.clientY-drag.startY;if(!drag.axisLocked&&Math.hypot(dx,dy)>8){if(Math.abs(dy)>Math.abs(dx)*1.15){drag.axisLocked='vertical';return}drag.axisLocked='horizontal'}if(drag.axisLocked==='vertical')return;const dt=Math.max(1,now-drag.lastTime);drag.vx=(e.clientX-drag.lastX)/dt;drag.lastX=e.clientX;drag.lastTime=now;if(Math.abs(dx)>6)drag.moved=true;if(!drag.moved)return;const width=CARD.getBoundingClientRect().width||400,clamp=Math.max(-width*1.35,Math.min(width*1.35,dx));const resistance=Math.abs(dx)>width*.55?width*.55+(Math.abs(dx)-width*.55)*.35:Math.abs(dx);const x=Math.sign(dx)*resistance;CARD.style.transform=`translate3d(${x}px,${Math.min(18,Math.abs(x)/width*18)}px,0) rotate(${x/width*11}deg)`;const progress=Math.min(1,Math.abs(x)/(width*.55));CARD.style.setProperty('--swipe-progress',progress);$('#cardzone')?.classList.toggle('dragging-left',dx<0);$('#cardzone')?.classList.toggle('dragging-right',dx>0);$('#stack-prev')?.style.setProperty('--stack-progress',progress);$('#stack-next')?.style.setProperty('--stack-progress',progress);$('#stack-second')?.style.setProperty('--stack-progress',progress);$('#stack-third')?.style.setProperty('--stack-progress',progress);$('#stamp-next')?.classList.toggle('visible',dx<0);$('#stamp-back')?.classList.toggle('visible',dx>0);e.preventDefault()}
