@@ -6,18 +6,17 @@ const { DuckDBInstance } = require('@duckdb/node-api');
 
 const PORT = process.env.PORT || 4173;
 const ROOT = __dirname;
-// ---- build / deploy info (shown in the about badge) ----
+// ---- build / deploy info ----
+// 'released' is baked into the image at build time (BUILD_TIME), so it reflects
+// the actual release/deploy moment regardless of server boot (Render free spins down).
 function buildInfo(){
   const rCommit=process.env.RENDER_GIT_COMMIT, rBranch=process.env.RENDER_GIT_BRANCH;
   let commit=process.env.BUILD_COMMIT||rCommit||'', branch=process.env.BUILD_BRANCH||rBranch||'';
-  // 'released' = the moment this build was released/baked.
-  // Prefer Render's deploy date env if provided; else git commit timestamp; else server boot.
-  let released='';
-  if(process.env.RENDER_DEPLOY_DATE) released=process.env.RENDER_DEPLOY_DATE;
-  try{
-    const cg=require('child_process').execFileSync('git',['log','-1','--format=%cI'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim();
-    if(cg) released=released||cg;
-  }catch(e){}
+  let released=process.env.BUILD_TIME||'';
+  if(!released && process.env.RENDER_DEPLOY_DATE) released=process.env.RENDER_DEPLOY_DATE;
+  if(!released){
+    try{ const cg=require('child_process').execFileSync('git',['log','-1','--format=%cI'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim(); if(cg) released=cg; }catch(e){}
+  }
   if(!released) released=new Date().toISOString();
   try{
     const g=require('child_process').execFileSync('git',['rev-parse','--short','HEAD'],{cwd:ROOT,encoding:'utf8',timeout:2500}).trim();

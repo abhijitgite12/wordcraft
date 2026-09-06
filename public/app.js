@@ -37,6 +37,7 @@ async function fetchTTS(text){
   try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, voice:voiceSel})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
 }
 let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
+const ttsPlayer = document.createElement('audio'); ttsPlayer.preload='auto'; ttsPlayer.muted=true; (ttsPlayer.muted=false);
 function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); } }
 function nativeSpeak(text){
   if(!window.speechSynthesis)return;
@@ -48,7 +49,7 @@ function nativeSpeak(text){
   window.speechSynthesis.speak(u);
 }
 function nativeStop(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
-function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } speakingBusy=false; activeLine=''; pending=''; activeAudio=null; }
+function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
 // Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
 async function speak(text,{force=false,human=true,allowRepeat=false}={}){
   if(!VOICE.on||!text)return;
@@ -65,15 +66,17 @@ async function speak(text,{force=false,human=true,allowRepeat=false}={}){
   setVoiceCaption(text,true); setVoiceState('speaking');
   const brief=text.length<45;
   const useHuman=human && humanVoice.on && !brief && !!window.fetch && !ttsFetching;
+// useHuman: reuse one global audio element (unlocked by the mic-click gesture) to avoid autoplay block.
   if(useHuman){
     ttsFetching=true; const t0=Date.now(); let got=null;
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
-    if(!got || Date.now()-t0>1400){ if(!activeAudio) nativeSpeak(text); return; }
-    const a=new Audio(), url=URL.createObjectURL(got); a.src=url; activeAudio=a;
-    a.onended=()=>{ URL.revokeObjectURL(url); finishLine(); };
-    a.onerror=()=>{ URL.revokeObjectURL(url); nativeSpeak(text); };
-    try{ await a.play(); }catch(e){ nativeSpeak(text); }
+    if(!got || Date.now()-t0>1500){ if(!activeAudio) nativeSpeak(text); return; }
+    const url=URL.createObjectURL(got);
+    const a=ttsPlayer; a.src=url; activeAudio=a;
+    a.onended=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
+    a.onerror=()=>{ URL.revokeObjectURL(url); activeAudio=null; nativeSpeak(text); };
+    a.load(); a.play().catch(()=>{ URL.revokeObjectURL(url); activeAudio=null; nativeSpeak(text); });
   } else {
     nativeSpeak(text);
   }
@@ -424,12 +427,21 @@ let fontSize=Number(localStorage.getItem('wordCraftFont')||135);function applyFo
 const vbtn=$('#version-btn'), vpop=$('#version-pop'), vbody=$('#vp-body'), vclose=$('#vp-close');
 function showAbout(){
   vpop.hidden=false; vbody.innerHTML='Loading…';
-  fetch('/api/version').then(r=>r.ok?r.json():null).then(v=>{
+  fetch('/api/version').then(r=>r.ok?r.json():null).then(async v=>{
     if(!v) throw 0;
-    const d=new Date(v.released||v.deployDate||v.started), now=new Date(v.started);
-    const fmt=(d)=>d.toLocaleString([],{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
-    const short=(c)=>{c=c||'';return c&&c!=='dev'?(c.length>10?c.slice(0,7):c):(c||'dev');};
-    vbody.innerHTML=`<div class="vr">Version <b>${esc(short(v.commit))}</b></div><div class="vr">Branch <b>${esc(v.branch||'—')}</b></div><div class="vr">Released <b>${esc(fmt(d))}</b></div><div class="vr">Server up <b>${esc(fmt(now))}</b></div>`;
+    const now=new Date(v.started);
+    const fmt=(x)=>{ const d=new Date(x); return (!isNaN(d))?d.toLocaleString([],{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—'; };
+    const shortc=(c)=>{c=c||'';return !!c&&c!=='dev'?(c.length>10?c.slice(0,7):c):(c||'dev');};
+    let rel=new Date(v.released); if(isNaN(rel)) rel=new Date(0);
+    // Prefer the exact commit date from GitHub (by SHA) for the true release time.
+    if(v.commit && v.commit!=='dev'){
+      try{
+        const c=shortc(v.commit);
+        const rp=await fetch('https://api.github.com/repos/abhijitgite12/wordcraft/commits/'+c,{headers:{Accept:'application/vnd.github+json'}});
+        if(rp.ok){ const p=await rp.json(); if(p&&p.commit&&p.commit.committer&&p.commit.committer.date){ rel=new Date(p.commit.committer.date); } }
+      }catch(e){}
+    }
+    vbody.innerHTML=`<div class="vr"><b>Version</b> ${esc(shortc(v.commit))}</div><div class="vr"><b>Branch</b> ${esc(v.branch||'—')}</div><div class="vr"><b>Released</b> ${esc(fmt(rel))}</div><div class="vr"><b>Server up</b> ${esc(fmt(now))}</div>`;
   }).catch(()=>{vbody.textContent='No version info available.'});
 }
 function toggleAbout(){ if(vpop.hidden)showAbout(); vpop.hidden=!vpop.hidden; }

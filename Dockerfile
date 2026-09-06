@@ -18,6 +18,13 @@ COPY words.json ./words.json
 
 ENV PORT=4173
 ENV ALLOW_RW=0
+# Bake the build (release) moment + git context into the image.
+ARG BUILD_TIME
+ARG BUILD_COMMIT
+ARG BUILD_BRANCH
+ENV BUILD_TIME=$BUILD_TIME
+ENV BUILD_COMMIT=$BUILD_COMMIT
+ENV BUILD_BRANCH=$BUILD_BRANCH
 EXPOSE 4173
 # APP_PASSWORD, OPENROUTER_API_KEY, SESSION_SECRET come from the environment
 CMD ["node", "server.js"]

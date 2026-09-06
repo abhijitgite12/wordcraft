@@ -1,6 +1,11 @@
 services:
   wordcraft:
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_TIME: ${BUILD_TIME:?Set in .env or shell (e.g. export BUILD_TIME=$(date -u +%FT%TZ))}
+        BUILD_COMMIT: ${BUILD_COMMIT:-$(git rev-parse --short HEAD)}
+        BUILD_BRANCH: ${BUILD_BRANCH:-$(git branch --show-current)}
     ports:
       - "4173:4173"
     environment:
