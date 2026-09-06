@@ -142,6 +142,8 @@ function localFastpath(text){
   if(any(['read options','what are the options','say the options']))return {tool:'options'};
   if(any(['yes','yeah','yep','sure','ok','okay','fine','right'])&&!has('no '))return {tool:'yes'};
   if(any(['no','nope','nah','not yet']))return {tool:'no'};
+  // Test/quiz requests mean: advance from the teach card to this word's question card.
+  if(any(['test me','test me out','quiz me','quiz this','ask me','ask me about this','check my recall','challenge me']))return {tool:'next'};
   if(any(['next','go','continue','forward','move on','advance','let it slide']))return {tool:'next'};
   if(any(['back','previous','go back','return','undo']))return {tool:'back'};
   if(any(['skip','pass','dont know','dunno','dont want']))return {tool:'skip'};
