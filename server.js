@@ -235,6 +235,72 @@ Rules:
   }
   throw last||new Error('No free model responded');
 }
+// ---- Vocal agent: full context + per-session memory (truly agentic) ----
+// Each turn gets the whole page situation (screen, word, definition, options),
+// a short rolling memory of the conversation, and must return ONE decision with
+// a spoken narration + (for free-speech answers) an interpretation verdict.
+const AGENT_ACTIONS = ['next','back','skip','repeat','slow','fast','reveal','answer_option','answer_meaning','deep_dive','dd_ask','options','help','review','browse','search','yes','no','mute','voice_on','stop','unknown'];
+const agentMemory = new Map(); // sessionId -> [{role,text}]
+async function agentTurn(body) {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const session = clean(body.session||'anon');
+  const screen = clean(body.screen);
+  const word = clean(body.word), definition = clean(body.definition);
+  const pos = clean(body.pos);
+  const userText = clean(body.text);
+  const options = Array.isArray(body.options) ? body.options.map(clean).slice(0,4) : [];
+  const legal = Array.isArray(body.tools) ? body.tools.filter(t=>AGENT_ACTIONS.includes(t)) : [];
+  if (!userText) throw new Error('An utterance is required');
+  const useMemory = body.memory !== false;
+  if (useMemory) { const m = agentMemory.get(session)||[]; m.push({role:'user', note:userText}); agentMemory.set(session, m.slice(-8)); }
+  const hist = useMemory ? (agentMemory.get(session)||[]).slice(-8).slice(0,-1) : [];
+  const histText = hist.length ? hist.map(h=>h.role==='user'?'User: '+h.note : 'App: '+h.note).join('\n') : '(nothing yet)';
+  const optText = options.length ? options.map((o,i)=>`${String.fromCharCode(65+i)}) ${o}`).join(' | ') : 'none (not a quiz card)';
+  const actionList = legal.length ? legal.join(', ') : AGENT_ACTIONS.filter(a=>a!=='unknown').join(', ');
+  const prompt = `You are the agent orchestrating a hands-free SAT/GRE flashcard app. You decide ONE next action and narrate it.
+
+CURRENT PAGE:
+- screen: ${screen}
+- word: "${word}"${pos?' ('+pos+')':''}
+- definition: "${definition}"
+- options (A-D): ${optText}
+
+ALLOWED ACTIONS (must pick one): ${actionList}
+Guidance per action:
+- answer_option: learner picks A/B/C/D -> set index (A=0,B=1,C=2,D=3).
+- answer_meaning: learner speaks their own meaning. Judge it against the definition/options and set verdict (0=wrong,1=close,2=correct) and give the canonical meaning in narration.
+- deep_dive / dd_ask: learner wants to learn/know something -> put their question/about in 'query'.
+- reveal: show the answer/definition.
+- repeat: re-say the last thing.
+- yes / no, next, back, skip, review, browse, search, stop, mute, voice_on, options, help, unknown.
+
+RECENT CONTEXT (last lines are assistant input):
+${histText}
+
+USER JUST SAID: "${userText}"
+
+Return valid JSON ONLY with keys: action, index (number 0-3 or null), verdict (0/1/2 or null), query (string or null), narration (short spoken confirmation, 1 sentence), confidence (0-1). No text outside the JSON.`;
+  let last;
+  for (const model of models) {
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
+        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:150})
+      });
+      const j=await r.json();
+      if(!r.ok){last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
+      let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
+      const p=JSON.parse(str);
+      const action = AGENT_ACTIONS.includes(p.action) && p.action!=='unknown' ? p.action : null;
+      const reply = { action, index: Number.isInteger(p.index)&&p.index>=0&&p.index<=3 ? p.index : null,
+        verdict: [0,1,2].includes(p.verdict) ? p.verdict : null, query: p.query?String(p.query).slice(0,80):null,
+        narration: p.narration?clean(p.narration).slice(0,200):'', confidence: Math.min(1,Math.max(0,Number(p.confidence)||0)), model };
+      if (reply.action) { const a=agentMemory.get(session)||[]; a.push({role:'assistant', note:reply.narration}); agentMemory.set(session, a.slice(-8)); }
+      return reply;
+    } catch(e){ last=e; }
+  }
+  throw last||new Error('No free model responded');
+}
 function serve(req,res) {
   const pathname = req.url.split('?')[0];
   const file = pathname === '/' ? 'index.html' : pathname.replace(/^\//,'');
@@ -311,6 +377,12 @@ const server=http.createServer((req,res)=>{
     if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await classifyIntent(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
+  }
+  if (req.method==='POST' && route==='/api/agent') {
+    if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
+    if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+    let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
+    req.on('end',async()=>{try {send(res,200,await agentTurn(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
   }
   // Fast cached example lookup: returns instantly when already generated, else generates + caches.
   if (req.method==='POST' && route==='/api/example') {

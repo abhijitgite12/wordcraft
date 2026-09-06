@@ -9,4 +9,35 @@
 /* green = synonym/example word, red = antonym */
 .in-sen{font-weight:700;color:#2f9e62}.syn{display:inline-block;color:#2f9e62}.ant{display:inline-block;color:#e05245}.relation-row{margin-top:10px;font-size:12px}.relation-row .syn,.relation-row .ant{margin-right:3px}.syn-tag,.ant-tag{color:#fff;border-radius:5px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:.5px;margin-right:6px}.syn-tag{background:#2f9e62}.ant-tag{background:#e05245}@media(max-width:600px){.app{padding:12px 12px}.front h1{font-size:calc(44px*var(--fs))}.card-zone{height:52vh}.craft-panel{left:12px;right:12px;width:auto;bottom:14px}}
 /* voice */
-.voice-control{position:relative}.voice-button{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:7px 9px;cursor:pointer;font-size:13px}.voice-indicator{position:absolute;top:-2px;right:-2px;width:9px;height:9px;border-radius:50%;background:#e05245;display:none}.voice-indicator.active{display:block;animation:pulse 1s infinite}.voice-fallback{max-width:min(100%,440px);margin:4px auto 0;display:none}.voice-fallback form{display:flex;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--card)}.voice-fallback input{border:0;padding:9px 12px;flex:1;outline:0;font-size:12px}.voice-fallback button{border:0;background:var(--purple);color:#fff;padding:0 14px;font-size:14px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.voice-fallback{max-width:min(100%,440px);margin:4px auto 0;display:none}.voice-fallback form{display:flex;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--card)}.voice-fallback input{border:0;padding:9px 12px;flex:1;outline:0;font-size:12px}.voice-fallback button{border:0;background:var(--purple);color:#fff;padding:0 14px;font-size:14px}/* ---- voice pill (Grok-style always-on status) ---- */
+header{position:relative}
+.voice-button{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:7px 9px;cursor:pointer;font-size:13px}
+.voice-pill{position:absolute;right:8px;top:calc(100% + 4px);display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 12px;box-shadow:0 8px 22px #30266b22;z-index:45;cursor:pointer;max-width:56vw}
+.voice-pill .vp-label{font-size:11px;color:var(--muted);font-weight:700;white-space:nowrap}
+.vp-dot{width:9px;height:9px;border-radius:50%;background:#9aa0b0;flex:none}
+.vp-wave{display:none;gap:2px;align-items:center;height:14px;flex:none}
+.vp-wave i{width:3px;height:5px;border-radius:2px;background:var(--purple);animation:vpbar .9s ease-in-out infinite}
+.vp-wave i:nth-child(2){animation-delay:.15s}.vp-wave i:nth-child(3){animation-delay:.3s}.vp-wave i:nth-child(4){animation-delay:.45s}
+.voice-pill[data-state=off] .vp-dot{background:#9aa3b0}
+.voice-pill[data-state=listening] .vp-dot{background:#2f9e62;animation:vppulse 2s infinite}
+.voice-pill[data-state=listening] .vp-label{color:#2f9e62}
+.voice-pill[data-state=hearing] .vp-dot{background:#e8a13a;animation:vppulse .5s infinite}
+.voice-pill[data-state=hearing] .vp-label{color:#e8a13a}
+.voice-pill[data-state=hearing] .vp-wave{display:flex}
+.voice-pill[data-state=hearing] .vp-wave i{animation-duration:.35s}
+.voice-pill[data-state=thinking] .vp-dot{background:#6555d8;animation:vppulse .8s ease-in-out infinite alternate}
+.voice-pill[data-state=thinking] .vp-label{color:#6555d8}
+.voice-pill[data-state=speaking] .vp-dot{background:#6555d8;animation:vppulse .5s infinite}
+.voice-pill[data-state=speaking] .vp-label{color:#6555d8}
+.voice-pill[data-state=speaking] .vp-wave{display:flex}
+@keyframes vpbar{0%,100%{height:5px}50%{height:14px}}
+@keyframes vppulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes vpad{0%,100%{transform:scale(1)}50%{transform:scale(.7)}}
+/* transcript caption */
+.voice-caption{position:absolute;right:8px;top:calc(100% + 46px);max-width:min(80vw,420px);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:12px;color:var(--ink);box-shadow:0 8px 22px #30266b22;z-index:45;opacity:.95}
+.voice-caption.hidden{display:none}
+.voice-caption.assistant{background:var(--lav);border-color:var(--purple)}
+.voice-caption.user::before{content:"You: ";color:var(--purple);font-weight:700}
+.voice-caption.assistant::before{content:"Voice: ";color:var(--purple);font-weight:700}
+.voice-fallback{margin:4px auto 12px;display:none}
+@media(max-width:600px){.voice-caption{right:12px}}

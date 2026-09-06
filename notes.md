@@ -154,6 +154,7 @@ Never commit API keys, Render tokens, passwords, `.env`, or local AI burn progre
 ## Recent changes (2026-09-06)
 
 - **Voice interaction layer (new):** 🎙 button in header + text-input fallback. Local fast-path matcher handles common commands (next/back/skip/repeat/reveal/options/help/mute/stop/answer A-D) with zero network; free-model `/api/intent` endpoint handles garbled/ambiguous/free-speech utterances. See `TOOL_CALLING.md`, `ACTION_MATRIX.md`, `VOICE_FLOW.md`.
+- **Vocal agent (most recent):** always-on continuous listening (toggle mic on), Grok-style status pill (off ☁️ listening/hearing/thinking/speaking) with live transcript caption, and a `/api/agent` endpoint that is truly agentic — full page context (screen/word/definition/options/legal tools) + per-session rolling memory, decides one action + spoken narration, and grades free-spoken meanings (verdict 0/1/2). Reflexive local fast-path still executes instant commands with zero network.
 - Text size adjuster added in the 🎨 theme menu (A− / A+, 85%–140% in 10% steps). Scales card typography via the `--fs` CSS variable; persisted per browser in localStorage key `wordCraftFont`. Commit `0778e2e`, verified live on Render.
 - Cache-bust versions when editing `public/` files: current are `style.css?v=wordcraft8` and `app.js?v=wordcraft7` (bump these on further changes so browsers pick up updates).
 - Theme-menu JS selects buttons via `.theme-menu [data-theme]` — new non-theme buttons added to the theme menu must either carry no `data-theme` or opt out of that selector.

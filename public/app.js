@@ -3,16 +3,39 @@ let words, score=0, wrong={}, seen={}, craftWord=null, feed=[], fi=0, asked=null
 const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shuffle=a=>[...a].sort(()=>Math.random()-.5);
 
-// ===== Voice layer: tool registry + local fast-path + speech =====
-const VOICE = { level: Number(localStorage.getItem('wordCraftVoice')||0), rate: Number(localStorage.getItem('wordCraftRate')||1), on: localStorage.getItem('wordCraftVoiceOn')!=='off' };
-let listening=false, voiceTimer=null;
+// ===== Vocal agent: always-on listening + agentic orchestration =====
+const VOICE = { on: localStorage.getItem('wordCraftVoiceOn')!=='off', rate: Number(localStorage.getItem('wordCraftRate')||1), micOn:false, state:'off', rec:null,
+  sessionID: localStorage.getItem('wordCraftSession') || (()=>{const s='wc-'+Math.random().toString(36).slice(2,10);localStorage.setItem('wordCraftSession',s);return s})() };
+let agentBusy=false;
+const VoiceLabels={off:'Voice off',listening:'Listening',hearing:'Hearing you…',thinking:'Thinking…',speaking:'Saying…'};
+// ---- state machine (Grok-style): off | listening | hearing | thinking | speaking ----
+function setVoiceState(state, label, transcript){
+  VOICE.state=state;
+  const pill=$('#voice-pill'), body=document.body;
+  if(pill){ pill.dataset.state=state; const l=pill.querySelector('.vp-label'); if(l)l.textContent=label||VoiceLabels[state]||''; pill.classList.toggle('active',state!=='off'); }
+  if(body){ body.classList.remove('v-off','v-listening','v-hearing','v-thinking','v-speaking'); body.classList.add('v-'+state); }
+  if(typeof transcript==='string') setVoiceCaption(transcript,false);
+  if(state==='off') setVoiceCaption('',false);
+}
+function setVoiceCaption(text,asAssistant){
+  const cap=$('#voice-caption'); if(!cap)return;
+  cap.textContent=text||'';
+  cap.classList.toggle('assistant',!!asAssistant);
+  cap.classList.toggle('user',!!text&&!asAssistant);
+  cap.classList.toggle('hidden',!text);
+}
+// ---- text-to-speech with live state ----
 function speak(text,{rate=VOICE.rate,interrupt=true}={}){
   if(!VOICE.on||!window.speechSynthesis||!text)return;
   if(interrupt)window.speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(String(text));u.rate=rate;u.pitch=1;window.speechSynthesis.speak(u);
+  const u=new SpeechSynthesisUtterance(String(text));u.rate=rate;u.pitch=1;
+  u.onstart=()=>setVoiceState('speaking');
+  u.onend=u.onerror=()=>{ if(VOICE.micOn) setVoiceState('listening'); };
+  setVoiceCaption(String(text),true);
+  window.speechSynthesis.speak(u);
 }
-function stopSpeak(){if(window.speechSynthesis)window.speechSynthesis.cancel();}
-// Local, zero-network fast-path. Returns {tool,option,query} or null.
+function stopSpeak(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
+// ---- local reflexive fast-path (zero network) ----
 function localFastpath(text){
   const t=String(text||'').toLowerCase().trim(); if(!t)return null;
   const has=w=>t.includes(w), any=arr=>arr.some(has);
@@ -20,91 +43,139 @@ function localFastpath(text){
   if(any(['mute','voice off','turn off voice','silence']))return {tool:'mute'};
   if(any(['unmute','voice on','turn on voice']))return {tool:'voice_on'};
   if(any(['help','what can i','what do i','what can you','commands','options list']))return {tool:'help'};
-  if(any(['read options','read the options','what are the options','say the options']))return {tool:'options'};
-  if(any(['yes','yeah','yep','sure','ok','okay','fine','correct','right','that'])&&!has('no '))return {tool:'yes'};
-  if(any(['no','nope','nah','not yet','wait']))return {tool:'no'};
-  if(any(['next','go','continue','forward','let it slide','move on','advance','skip it']))return {tool:'next'};
+  if(any(['read options','what are the options','say the options']))return {tool:'options'};
+  if(any(['yes','yeah','yep','sure','ok','okay','fine','right'])&&!has('no '))return {tool:'yes'};
+  if(any(['no','nope','nah','not yet']))return {tool:'no'};
+  if(any(['next','go','continue','forward','move on','advance','let it slide']))return {tool:'next'};
   if(any(['back','previous','go back','return','undo']))return {tool:'back'};
   if(any(['skip','pass','dont know','dunno','dont want']))return {tool:'skip'};
-  if(any(['repeat','again','say it again','read again','what','pardon','slower','slow down','one more time','replay']))return {tool:'repeat'};
-  if(any(['reveal','show me','show it','show answer','give up','just tell me','i give up','what is it','let me see','show','tell me the answer','answer reveal','flip']))return {tool:'reveal'};
+  if(any(['repeat','again','say it again','read again','what','pardon','slower','one more time','replay']))return {tool:'repeat'};
+  if(any(['reveal','show me','show it','show answer','give up','just tell me','i give up','what is it','let me see','flip']))return {tool:'reveal'};
   if(any(['deep dive','deep-dive','explain more','learn more','dive']))return {tool:'deep_dive'};
-  if(any(['review','review deck','missed words','my review']))return {tool:'review'};
-  if(any(['browse','word bank','search words','find a word']))return {tool:'browse'};
-  // option letters / ordinals
   const m=t.match(/\b([abcd])\b/); if(m)return {tool:'answer_option',option:'abcd'.indexOf(m[1])};
-  const num=t.match(/\b([1-4])\b/); if(num)return {tool:'answer_option',option:Number(num[1])-1};
+  const n=t.match(/\b([1-4])\b/); if(n)return {tool:'answer_option',option:Number(n[1])-1};
   const ord={'first':0,'second':1,'third':2,'fourth':3}; for(const k in ord) if(t.includes(k))return {tool:'answer_option',option:ord[k]};
   return null;
 }
-// Page toolset (legal actions) from current state.
+// ---- page context for the agent ----
 function currentTools(){
   const c=cur(); const base=['next','back','skip','repeat','slow','fast','options','help','mute','voice_on','stop'];
   if(!c||c.type==='empty')return ['next','back','repeat','help','mute','voice_on','stop'];
-  if(c.type==='test')return ['answer_option','answer_meaning','repeat','back','skip','options','help','mute','voice_on','stop'];
-  if(c.type==='relearn')return ['next','back','repeat','reveal','deep_dive','options','help','mute','voice_on','stop','yes','no'];
-  // teach
+  if(c.type==='test')return [...base,'answer_option','answer_meaning','reveal'];
+  if(c.type==='relearn')return [...base,'reveal','deep_dive','yes','no'];
   return [...base,'reveal','deep_dive'];
 }
-// Resolve an utterance to a tool: local first, then free-model intent.
-async function resolveIntent(text){
-  const local=localFastpath(text); if(local)return local;
-  const c=cur(), w=c?.word;
+function currentOptions(){
+  if(cur()?.type!=='test')return [];
+  return [...(document.querySelectorAll('.option')||[])].map(o=>String(o.dataset.a||'').trim()).filter(Boolean).slice(0,4);
+}
+function currentScreen(){
+  const b=document.body;
+  if(b.classList.contains('reviewing'))return 'review';
+  if(b.classList.contains('browsing'))return 'browse';
+  const c=cur(); if(!c||c.type==='empty')return 'empty';
+  if(c.type==='relearn')return 'relearn';
+  if(c.type==='test')return 'question';
+  return document.querySelector('#card')?.classList.contains('flipped') ? 'teach_answer' : 'teach';
+}
+function currentWord(){ const c=cur(); return c?.word||null; }
+// ---- the agent decides the next action with full page context + memory ----
+async function agentDecide(text){
+  const w=currentWord();
   try{
-    const r=await fetch('/api/intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word:w?.word||'',definition:w?(w.aiDefinition||w.definition||''):'',screen:c?.type||'teach',tools:currentTools(),text})});
-    if(!r.ok)return null; const d=await r.json();
-    return {tool:d.tool==='unknown'?null:d.tool,option:d.option,query:d.query,confidence:d.confidence,model:d.model};
+    const r=await fetch('/api/agent',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session:VOICE.sessionID, screen:currentScreen(), word:w?.word||'', pos:w?.partOfSpeech||'',
+        definition:w?(w.aiDefinition||w.definition||''):'', options:currentOptions(), tools:currentTools(), text, memory:true})});
+    if(!r.ok)return null; return await r.json();
   }catch(e){return null}
 }
-// Execute a resolved tool against the current page.
-async function runTool(tool,params={}){
-  if(!tool)return;
-  const c=cur(); const legal=currentTools(); if(!legal.includes(tool)){ speak("That's not available here. Say help to hear what you can do."); return; }
-  const w=c?.word;
-  switch(tool){
+// ---- act on the agent's decision ----
+async function runAction(d){
+  const legal=currentTools(); const w=currentWord();
+  if(!d||!d.action||!legal.includes(d.action)){
+    speak("I didn't catch that. Try again, or say help."); setVoiceState(VOICE.micOn?'listening':'off'); return;
+  }
+  const n=String(d.narration||''); setVoiceState('thinking');
+  switch(d.action){
     case 'next': move(1); break;
     case 'back': move(-1); break;
     case 'skip': move(1); break;
-    case 'repeat': speak(w?w.word+' — '+(w.aiDefinition||w.definition||''):''); break;
-    case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak('Slower');break;
-    case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak('Faster');break;
-    case 'reveal': showFlip(); break;
-    case 'deep_dive': if(w)openCraft(w); break;
-    case 'options': if(c?.type==='test'&&window.$$){speak('Read the options.');}else speak('You can say next, back, skip, reveal, or help.'); break;
-    case 'help': speak('You can say: '+legal.slice(0,8).join(', ')+', or help.'); break;
+    case 'stop': stopSpeak(); setVoiceState(VOICE.micOn?'listening':'off'); return;
+    case 'repeat': speak(w?(w.word+' — '+(w.aiDefinition||w.definition||'')):(n||'Repeating.')); break;
+    case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Slower');break;
+    case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Faster.');break;
+    case 'reveal': showFlip(); speak(n||w?w.word+' means '+(w.aiDefinition||w.definition||''):'Here it is.'); break;
+    case 'deep_dive': if(w)openCraft(w); if(n)speak(n); break;
+    case 'options': speak(n||(currentOptions().length?currentOptions().map((o,i)=>'Option '+String.fromCharCode(65+i)+'. '+o).join(' '):'You can say next, back, skip, reveal, or help.')); break;
+    case 'help': speak(n||'You can say next, back, skip, reveal, deep dive, or ask me anything.'); break;
     case 'review': showPage('review'); break;
     case 'browse': showPage('browse'); break;
-    case 'mute': VOICE.on=false;localStorage.setItem('wordCraftVoiceOn','off');speak('Voice off');break;
-    case 'voice_on': VOICE.on=true;localStorage.setItem('wordCraftVoiceOn','on');speak('Voice on');break;
-    case 'stop': stopSpeak(); break;
-    case 'answer_option': if(c?.type==='test'&&typeof params.option==='number'){const o=$$('.option')[params.option];if(o&&!o.classList.contains('disabled'))o.click();}break;
-    case 'answer_meaning': speak("Say your answer, or pick an option."); break;
-    case 'yes': if(c?.type==='relearn'){delete wrong[w.word];persist();update();move(1);}break;
-    case 'no': speak('Keep it in review.'); break;
-    default: break;
+    case 'mute': VOICE.on=false; stopSpeak(); setVoiceState('off'); localStorage.setItem('wordCraftVoiceOn','off'); return;
+    case 'voice_on': VOICE.on=true; localStorage.setItem('wordCraftVoiceOn','on'); speak('Voice on.'); break;
+    case 'answer_option': if(typeof d.index==='number'&&cur()?.type==='test'){const o=$$('.option')[d.index];if(o&&!o.classList.contains('disabled'))o.click();} else speak(n||'Which one — A, B, C, or D?'); break;
+    case 'answer_meaning': answerFree(d.verdict, n); break;
+    case 'yes': if(cur()?.type==='relearn'&&w){delete wrong[w.word];persist();update();move(1);} break;
+    case 'no': speak(n||'Keeping it in review.'); break;
+    default: speak(n||'You can say next, back, skip, reveal, or help.'); break;
   }
 }
-async function handleUtterance(text){
-  if(!text)return;
-  const r=await resolveIntent(text); if(!r||!r.tool){ speak("I didn't catch that. Say help to hear what you can do."); return; }
-  await runTool(r.tool,r);
+// free-spoken meaning: graded by the agent verdict (0 wrong, 1 close, 2 correct)
+function answerFree(verdict, narration){
+  const w=cur()?.word; const note=$('#t-ans');
+  if(verdict===2){ delete wrong[w.word]; score++; if(note){note.textContent='✦ Correct. '+(narration||'');note.className='answer-note good';} celebrate(note,false); }
+  else if(verdict===1){ if(note){note.textContent='Close — '+(narration||'you have the right idea.')+' The full meaning is '+displayDef(w)+'.';note.className='answer-note good';} }
+  else{ wrong[w.word]=(wrong[w.word]||0)+1; if(note){note.textContent='Not quite. '+(narration||(w.aiDefinition||w.definition||''));note.className='answer-note bad';} const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj}); }
+  persist(); update(); autoSizeCard();
 }
-// Mic wrapper with graceful fallback to a text box.
+// ---- handle an utterance: reflexive local first, else the agent ----
+async function handleUtterance(text){
+  text=String(text||'').trim(); if(!text)return;
+  setVoiceState('thinking','',text);
+  const local=localFastpath(text);
+  if(local){ setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''}); }
+  if(agentBusy)return; agentBusy=true;
+  const d=await agentDecide(text); agentBusy=false;
+  setVoiceState('listening');
+  if(d) await runAction({action:d.action,index:d.index,verdict:0,query:d.query||'',narration:d.narration||''});
+  else speak("I didn't catch that. Say help.");
+  // re-listening handled by state
+  if(VOICE.micOn) setVoiceState('listening');
+}
+// ---- always-on mic (continuous; restarts while mic on) ----
 function startListening(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ speak("Voice isn't supported here. Use the buttons."); return; }
-  const rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.maxAlternatives=1;
-  rec.onstart=()=>{listening=true;const el=$('#voice-indicator');if(el)el.classList.add('active');};
-  rec.onresult=e=>{const t=e.results[0][0].transcript;handleUtterance(t);};
-  rec.onend=()=>{listening=false;const el=$('#voice-indicator');if(el)el.classList.remove('active');};
-  rec.onerror=()=>{listening=false;speak("Sorry, I didn't catch that.");};
-  rec.start();
+  if(!SR){ setVoiceState('off','',"Voice not supported here"); speak("Voice isn't supported in this browser."); VOICE.micOn=false; return; }
+  if(!VOICE.on)return;
+  const rec=new SR(); rec.lang='en-US'; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
+  rec.onstart=()=>setVoiceState('listening');
+  rec.onspeechstart=()=>setVoiceState('hearing');
+  rec.onspeechend=()=>{ if(VOICE.micOn) setVoiceState('listening'); };
+  rec.onresult=e=>{
+    let interim='',final='';
+    let f='',im='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ const tr=e.results[i][0].transcript; if(e.results[i].isFinal) f+=(' '+tr); else im+=(' '+tr); }
+    final=f.trim(); interim=im.trim();
+    setVoiceCaption(final||interim,false);
+    if(final){ setVoiceState('thinking','',final); handleUtterance(final); }
+    else setVoiceState('hearing');
+  };
+  rec.onerror=e=>{ if(e.error==='not-allowed'||e.error==='service-not-allowed'){ VOICE.micOn=false; setVoiceState('off'); } else setVoiceState('hearing'); };
+  rec.onend=()=>{ if(VOICE.micOn) startListening(); };
+  rec.start(); VOICE.rec=rec;
 }
-// A tiny always-available text fallback for testing voice without a mic.
+function toggleMic(on){
+  on=(on===undefined)?!VOICE.micOn:on;
+  VOICE.micOn=!!on;
+  if(on && VOICE.on){ setVoiceState('listening'); startListening(); }
+  else{ if(VOICE.rec)VOICE.rec.abort(); VOICE.rec=null; setVoiceState('off'); }
+}
 function initVoiceUI(){
-  const btn=$('#voice-btn'); if(btn)btn.onclick=()=>{if(listening)return;startListening();};
+  const btn=$('#voice-btn'), pill=$('#voice-pill');
+  const toggle=()=>toggleMic(!VOICE.micOn);
+  if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
+  setVoiceState('off');
 }
 
 function levelOf(w){const d=w.difficulty||2;return d<=1?'Easy':d===2?'Medium':'Hard'}
