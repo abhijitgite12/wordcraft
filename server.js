@@ -144,7 +144,7 @@ function send(res, status, data, type='application/json') {
 }function clean(text) { return String(text || '').replace(/[<>]/g, '').slice(0, 500); }
 
 // ---- Human neural TTS via Edge-TTS (free, no key) ----
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const cacheDir = path.join(ROOT, '.tts');
 let ttsReady = false;
 try{ fs.mkdirSync(cacheDir,{recursive:true}); ttsReady = checkTTS(); }catch(e){}
@@ -158,11 +158,19 @@ async function tts(text, voice){
   const key = (v)+'::'+text;
   if (ttsCache.has(key)) return {buf:ttsCache.get(key), key, cached:true};
   const mp3 = path.join(cacheDir, Math.random().toString(36).slice(2)+'.mp3');
-  execFileSync('python3',['-m','edge_tts','--voice',v,'--text',text,'--write-media',mp3],{timeout:20000,stdio:'pipe'});
-  const buf = fs.readFileSync(mp3); fs.unlink(mp3,()=>{});
-  if (ttsCache.size > TTS_MAX) ttsCache.delete(ttsCache.keys().next().value);
-  ttsCache.set(key, buf);
-  return {buf, voice:v, cached:false};
+  // Non-blocking: spawn edge-tts async so the event loop (other requests) stays responsive.
+  await new Promise((resolve,rej)=>{
+    execFile('python3',['-m','edge_tts','--voice',v,'--text',text,'--write-media',mp3],{timeout:15000},(err)=>{
+      if(err) rej(err); else resolve();
+    });
+  }).then(()=>{},
+   (e)=>{ try{fs.unlink(mp3,()=>{});}catch(_){} throw e; });
+  try{
+    const buf = fs.readFileSync(mp3); fs.unlink(mp3,()=>{});
+    if (ttsCache.size > TTS_MAX) ttsCache.delete(ttsCache.keys().next().value);
+    ttsCache.set(key, buf);
+    return {buf, voice:v, cached:false};
+  }catch(e){ throw e; }
 }
 function bufToBase64(buf){ return buf.toString('base64'); }
 function base64ToBuf(b){ return Buffer.from(b,'base64'); }
