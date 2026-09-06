@@ -411,8 +411,10 @@ async function orch(body){
   const opts=Array.isArray(body.options)?body.options.map(clean).slice(0,4):[];
   const screen=clean(body.screen||'teach');
   const stats=clean(body.stats||'');
+  const history=Array.isArray(body.history)?body.history.slice(-16).map(x=>clean(JSON.stringify(x))).join('\n'):'(no interaction history)';
   const tools=Array.isArray(body.tools)?body.tools.filter(t=>ORCH_ACTIONS.includes(t)):[];
-  const tl=tools.length?tools.join(', '):'next, back, skip, reveal, repeat, answer_option, deep_dive';
+  const toolMeaning={next:'advance to the next learning card or step',back:'return to the previous card or step',skip:'skip this word without marking it wrong',repeat:'re-say or revisit the current teaching point',slow:'slow the tutor voice',fast:'speed up the tutor voice',reveal:'show or explain the hidden meaning',answer_option:'submit one of the visible quiz choices using index',answer_meaning:'judge the learner\'s spoken definition',deep_dive:'open or continue a deeper exploration of this word',dd_ask:'answer the learner\'s deeper question',options:'read or explain the choices currently visible',help:'explain the useful actions in this current state',review:'open the review deck',browse:'open the word bank',search:'search the word bank',yes:'accept the pending confirmation',no:'decline the pending confirmation',mute:'turn tutor voice off',voice_on:'turn tutor voice on',stop:'stop current speech'};
+  const tl=tools.length?tools.map(t=>t+' = '+(toolMeaning[t]||'page action')).join('; '):'page actions are unavailable';
   const m=tmem.get(session)||[];
   const hist=m.slice(-8).map(x=>x.role==='u'?'User: '+x.txt:'Tutor: '+x.txt).join('\n')||'(fresh session)';
   const optText=opts.length?opts.map((o,i)=>String.fromCharCode(65+i)+') '+o).join(' | '):'none (not a quiz)';
@@ -434,8 +436,11 @@ CURRENT: screen=${screen}, word="${word}"${pos?' ('+pos+')':''}, definition="${d
 Example: ${ex}. Synonyms: ${syn}. Antonyms: ${ant}. Quiz options: ${optText}. Learner stats: ${stats}.
 Tools you can act with: ${tl}
 
-Recent dialogue:
+Recent tutor dialogue:
 ${hist}
+
+Recent learner/page interaction timeline (includes correct/incorrect answers, navigation, taps/voice tools):
+${history}
 
 ${job}
 
@@ -445,7 +450,7 @@ Reply ONLY valid JSON:
  "index":<0-3 if learner chose an option, else null>,
  "verdict":<0 wrong / 1 close / 2 correct when grading a spoken meaning, else null>,
  "done":<true if now wait for the learner, false if continue acting>}
-Important routing examples: if the learner says “test me”, “test me out”, “quiz me”, “ask me about this”, or “check my recall” while the current screen is a teach card and next is allowed, choose action “next”. If they say “show me”, “I give up”, or ask for the meaning, choose “reveal”. If they speak a possible definition on a question card, choose “answer_meaning”. Do not add text outside the JSON. Do not repeat phrases you already used.`;
+Interpret the learner's meaning from the current screen, card content, available tools, and recent dialogue. Do not require exact command phrases or follow a hardcoded trigger list. Choose the most helpful legal tool for the learner's apparent goal. Do not add text outside the JSON. Do not repeat phrases you already used.`;
   let last;
   for (const model of modelPool()) {
     try {

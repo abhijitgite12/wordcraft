@@ -132,27 +132,13 @@ function stopSpeak(){ stopAllAudio(); }
 
 
 // ---- local reflexive fast-path (zero network) ----
+// Only emergency voice controls bypass the agent. All learning language is
+// intentionally interpreted by the page-aware orchestrator.
 function localFastpath(text){
   const t=String(text||'').toLowerCase().trim(); if(!t)return null;
-  const has=w=>t.includes(w), any=arr=>arr.some(has);
-  if(any(['stop','cancel','quiet','shut up']))return {tool:'stop'};
-  if(any(['mute','voice off','turn off voice','silence']))return {tool:'mute'};
-  if(any(['unmute','voice on','turn on voice']))return {tool:'voice_on'};
-  if(any(['help','what can i','what do i','what can you','commands','options list']))return {tool:'help'};
-  if(any(['read options','what are the options','say the options']))return {tool:'options'};
-  if(any(['yes','yeah','yep','sure','ok','okay','fine','right'])&&!has('no '))return {tool:'yes'};
-  if(any(['no','nope','nah','not yet']))return {tool:'no'};
-  // Test/quiz requests mean: advance from the teach card to this word's question card.
-  if(any(['test me','test me out','quiz me','quiz this','ask me','ask me about this','check my recall','challenge me']))return {tool:'next'};
-  if(any(['next','go','continue','forward','move on','advance','let it slide']))return {tool:'next'};
-  if(any(['back','previous','go back','return','undo']))return {tool:'back'};
-  if(any(['skip','pass','dont know','dunno','dont want']))return {tool:'skip'};
-  if(any(['repeat','again','say it again','read again','what','pardon','slower','one more time','replay']))return {tool:'repeat'};
-  if(any(['reveal','show me','show it','show answer','give up','just tell me','i give up','what is it','let me see','flip']))return {tool:'reveal'};
-  if(any(['deep dive','deep-dive','explain more','learn more','dive']))return {tool:'deep_dive'};
-  const m=t.match(/\b([abcd])\b/); if(m)return {tool:'answer_option',option:'abcd'.indexOf(m[1])};
-  const n=t.match(/\b([1-4])\b/); if(n)return {tool:'answer_option',option:Number(n[1])-1};
-  const ord={'first':0,'second':1,'third':2,'fourth':3}; for(const k in ord) if(t.includes(k))return {tool:'answer_option',option:ord[k]};
+  if(/\b(stop|cancel|quiet|shut up)\b/.test(t))return {tool:'stop'};
+  if(/\b(mute|voice off|turn off voice|silence)\b/.test(t))return {tool:'mute'};
+  if(/\b(unmute|voice on|turn on voice)\b/.test(t))return {tool:'voice_on'};
   return null;
 }
 // ---- page context for the agent ----
@@ -181,6 +167,12 @@ function currentWord(){ const c=cur(); return c?.word||null; }
 // ---- Local, natural teaching narration (human tutor voice built from real card data) ----
 let narrGuard='';
 let actionReentrant=false;
+// Holistic learner timeline sent to the orchestrator: voice, taps, navigation, answers, cards.
+const interactionLog=[];
+function recordInteraction(kind, detail){
+  interactionLog.push({at:new Date().toISOString(),kind,detail:String(detail||'').slice(0,180),screen:currentScreen?.()||'' ,word:cur?.()?.word?.word||''});
+  if(interactionLog.length>24)interactionLog.shift();
+}
 let prevUtterance='', lastUtteranceAt=0;
 // tutorState tracks learner context ONLY to feed the orchestrator (model builds conversation);
 // there are no scripted lines or hints here — the model writes everything.
@@ -207,7 +199,8 @@ async function orchSay(payload, w){
     word:ww.word, definition:ww.aiDefinition||ww.definition||'', pos:ww.partOfSpeech||'',
     example:ww.example||'', synonyms:ww.synonyms||[], antonyms:ww.antonyms||[],
     screen:currentScreen(), options:currentOptions(), tools:currentTools(),
-    stats:`streak ${tutorState.streak}, consecutiveMiss ${tutorState.consecutiveMiss}, review ${Object.keys(wrong).length}` };
+    stats:`streak ${tutorState.streak}, consecutiveMiss ${tutorState.consecutiveMiss}, review ${Object.keys(wrong).length}`,
+    history:interactionLog.slice(-16) };
   try{
     const r=await fetch('/api/orch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)return; const d=await r.json();
@@ -244,6 +237,7 @@ async function agentDecide(text){
 // ---- act on the agent's decision ----
 async function runAction(d){
   if(actionReentrant) return; actionReentrant=true;
+  recordInteraction('tool',d?.action||'none');
   const legal=currentTools(); const w=currentWord();
   if(!d||!d.action||!legal.includes(d.action)){
     // Let the orchestrator decide how to respond naturally (no canned menu).
@@ -288,6 +282,7 @@ function answerFree(verdict, narration){if(guideTimer){clearTimeout(guideTimer);
 async function handleUtterance(text){
 if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   text=String(text||'').trim(); if(!text)return;
+  recordInteraction('voice',text);
   if(text===prevUtterance && Date.now()-lastUtteranceAt<1500) return; // ignore recognizer repeats
   prevUtterance=text; lastUtteranceAt=Date.now();
   setVoiceState('thinking','',text);
@@ -396,7 +391,7 @@ return `<div class="test-card"><div class="card-top"><div class="test-label">⚡
 function correctAnswer(w){if(asked===0)return shortDef(w);if(asked===1)return (w.synonyms||[])[0];return (w.antonyms||[])[0]}
 function stackPreviewHtml(item){if(!item||!item.word)return '';const w=item.word;if(item.type==='test')return `<div class="stack-test"><div class="stack-preview-top"><span>⚡ QUICK TEST</span><span>→</span></div><p>Which meaning best fits <b>${esc(w.word)}</b>?</p><div class="stack-options"><i></i><i></i><i></i><i></i></div></div>`;return `<div class="stack-teach"><div class="stack-preview-top"><span>${esc(w.partOfSpeech||'WORD')}</span><span>→</span></div><strong>${esc(w.word)}</strong><small>${esc(displayDef(w))}</small></div>`}
 function renderStack(){ensureAhead(3);const previous=$('#stack-prev');if(previous)previous.innerHTML=stackPreviewHtml(feed[fi-1]);const layers=[['#stack-next',1],['#stack-second',2],['#stack-third',3]];layers.forEach(([selector,offset])=>{const el=$(selector);if(el)el.innerHTML=stackPreviewHtml(feed[fi+offset])});$('#stack-prev')?.style.setProperty('--stack-progress','0');$('#stack-next')?.style.setProperty('--stack-progress','0');$('#stack-second')?.style.setProperty('--stack-progress','0');$('#stack-third')?.style.setProperty('--stack-progress','0')}
-function commitMove(dir){if(dir<0&&fi===0)return;if(dir>0){fi++;ensureFeed()}else fi=Math.max(0,fi-1);render()}
+function commitMove(dir){if(dir<0&&fi===0)return;if(dir>0){fi++;ensureFeed()}else fi=Math.max(0,fi-1);recordInteraction('navigation',dir>0?'next':'back');render()}
 function springCard(){CARD.classList.add('spring-back');CARD.style.transform='';$('#cardzone')?.classList.remove('dragging-left','dragging-right');$('#stack-prev')?.style.setProperty('--stack-progress','0');$('#stack-next')?.style.setProperty('--stack-progress','0');$('#stack-second')?.style.setProperty('--stack-progress','0');$('#stack-third')?.style.setProperty('--stack-progress','0');setTimeout(()=>CARD.classList.remove('spring-back'),430)}
 function syncWordUrl(word){if(!word||document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;const u=new URL(location.href);u.search='';u.searchParams.set('w',word.word);history.replaceState(null,'',u)}
 function autoSizeCard(){const zone=$('#cardzone'),c=$('#card');if(!zone||!c)return;let need=0;c.querySelectorAll('.face,.test-card,.relearn-card,.empty-card').forEach(f=>{f.style.height='100%';need=Math.max(need,f.scrollHeight)});need=Math.max(340,Math.min(600,need));zone.style.height=need+'px'}
@@ -405,11 +400,11 @@ if(c.type==='teach'){html=teachHtml(c.word)}else if(c.type==='relearn'){html=rel
 if(!c.word.example)ensureExample(c.word);
 $('#card [data-regen]')&&($('#card [data-regen]').onclick=e=>{e.stopPropagation();regenerateExample(cur().word)});
 autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; press <b>1-4</b> or tap to answer':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word];persist();update();move(1)};craftWord=c.word;update()}
-function showFlip(){let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
+function showFlip(){recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
 function move(dir){let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
-function answer(btn){if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];bumpTutor('correct',w);btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
+function answer(btn){if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right; recordInteraction('answer',correct?'correct':'incorrect');$$('.option').forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});let ans=$('#t-ans');if(!correct){btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);ans.textContent='↺ Learning moment — this word comes right back for a clearer pass.';ans.className='answer-note bad';const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});if(tutorLive)narrate('wrong')}else{score++;delete wrong[w.word];bumpTutor('correct',w);btn.classList.add('locked-in');celebrate(btn,false);ans.textContent='✦ Got it! Swipe left for the next word.';ans.className='answer-note good';if(tutorLive)narrate('correct')}persist();update();autoSizeCard()}
 const CARD=$('#card');let drag=null,suppressClick=false;
 function dragStart(e){if(e.pointerType&&e.pointerType!=='mouse')return;if(e.button!==undefined&&e.button!==0)return;if(e.target.closest('button,.option'))return;if(CARD.classList.contains('swiping'))return;drag={id:e.pointerId||'mouse',startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastTime:performance.now(),vx:0,moved:false,axisLocked:false};CARD.setPointerCapture?.(e.pointerId);CARD.classList.add('dragging')}
 function dragMove(e){const id=e.pointerId??'touch';if(!drag||id!==drag.id)return;const now=performance.now(),dx=e.clientX-drag.startX,dy=e.clientY-drag.startY;if(!drag.axisLocked&&Math.hypot(dx,dy)>8){if(Math.abs(dy)>Math.abs(dx)*1.15){drag.axisLocked='vertical';return}drag.axisLocked='horizontal'}if(drag.axisLocked==='vertical')return;const dt=Math.max(1,now-drag.lastTime);drag.vx=(e.clientX-drag.lastX)/dt;drag.lastX=e.clientX;drag.lastTime=now;if(Math.abs(dx)>6)drag.moved=true;if(!drag.moved)return;const width=CARD.getBoundingClientRect().width||400,clamp=Math.max(-width*1.35,Math.min(width*1.35,dx));const resistance=Math.abs(dx)>width*.55?width*.55+(Math.abs(dx)-width*.55)*.35:Math.abs(dx);const x=Math.sign(dx)*resistance;CARD.style.transform=`translate3d(${x}px,${Math.min(18,Math.abs(x)/width*18)}px,0) rotate(${x/width*11}deg)`;const progress=Math.min(1,Math.abs(x)/(width*.55));CARD.style.setProperty('--swipe-progress',progress);$('#cardzone')?.classList.toggle('dragging-left',dx<0);$('#cardzone')?.classList.toggle('dragging-right',dx>0);$('#stack-prev')?.style.setProperty('--stack-progress',progress);$('#stack-next')?.style.setProperty('--stack-progress',progress);$('#stack-second')?.style.setProperty('--stack-progress',progress);$('#stack-third')?.style.setProperty('--stack-progress',progress);$('#stamp-next')?.classList.toggle('visible',dx<0);$('#stamp-back')?.classList.toggle('visible',dx>0);e.preventDefault()}
@@ -420,7 +415,7 @@ CARD.addEventListener('touchmove',e=>{if(!drag||drag.id!=='touch')return;const t
 CARD.addEventListener('touchend',e=>{if(!drag||drag.id!=='touch')return;const t=e.changedTouches[0];dragEnd({pointerId:'touch',clientX:t.clientX,clientY:t.clientY})},{passive:true});
 CARD.addEventListener('touchcancel',e=>{if(drag?.id==='touch'){springCard();drag=null;CARD.classList.remove('dragging')}},{passive:true});
 document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;let n=Number(e.key);if(n>=1&&n<=4){let o=$$('.option')[n-1];if(o&&!o.classList.contains('disabled'))o.click();return}if(e.key==='ArrowRight')move(1);if(e.key==='ArrowLeft')move(-1);if(e.key===' '){if($('#card').querySelector('.face'))showFlip();else move(1)}});
-function openCraft(x){craftWord=x;let c=$('#craft-panel');c.classList.add('open');$('#craft-sub').textContent=`Exploring “${x.word}”`;$('#craft-body').innerHTML=`<div class="steps"><p class="step-head">Quick questions</p><div class="prompt-chips"><button data-ask="Explain it simply and give a vivid example.">1. Explain</button><button data-ask="Give a fun memory hook.">2. Memory</button><button data-ask="Contrast this word with a near-synonym.">3. Near-syn</button><button data-ask="Ask me two deeper questions.">4. Test me</button><button data-ask="Show this in novels or history.">5. In the wild</button></div><p class="step-head or">OR ask anything</p></div>`;if(tutorLive)narrateOn('dive',x)}
+function openCraft(x){recordInteraction('deep-dive','open '+(x?.word||''));craftWord=x;let c=$('#craft-panel');c.classList.add('open');$('#craft-sub').textContent=`Exploring “${x.word}”`;$('#craft-body').innerHTML=`<div class="steps"><p class="step-head">Quick questions</p><div class="prompt-chips"><button data-ask="Explain it simply and give a vivid example.">1. Explain</button><button data-ask="Give a fun memory hook.">2. Memory</button><button data-ask="Contrast this word with a near-synonym.">3. Near-syn</button><button data-ask="Ask me two deeper questions.">4. Test me</button><button data-ask="Show this in novels or history.">5. In the wild</button></div><p class="step-head or">OR ask anything</p></div>`;if(tutorLive)narrateOn('dive',x)}
 $('#close-craft').onclick=()=>$('#craft-panel').classList.remove('open');
 async function askCraft(q){let x=craftWord||words.find(w=>w.word===curWord)||pick();$('#craft-body').innerHTML='<p>✦ thinking…</p>';try{let r=await fetch('/api/genie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word:x.word,definition:x.definition,mode:q})});let d=await r.json();if(!r.ok)throw Error(d.error);$('#craft-body').innerHTML=`<div class="answer"><button class="quick-back" id="quick-back">← Quick questions</button><div class="direct-answer"><span class="answer-kicker">ANSWER</span><p>${highlightIn(x.word,d.directAnswer||d.explanation||'')}</p></div><div class="block"><strong>Plain English</strong><br>${highlightIn(x.word,d.explanation||'')}</div><div class="block"><strong>Try it</strong><br><i>${highlightIn(x.word,d.example||'')}</i></div><div class="block"><strong>Memory hook</strong><br>${highlightIn(x.word,d.memoryHook||'')}</div><div class="block"><strong>Think deeper</strong><br>${highlightIn(x.word,d.deeperQuestion||'')}</div><div class="block"><strong>Context</strong><br>${highlightIn(x.word,d.contextNote||'')}</div><div class="block"><strong>Related</strong><br><span class="syn">${esc((d.synonyms||[]).map(s=>'↗ '+s).join('  '))}</span> <span class="ant">${esc((d.antonyms||[]).map(a=>'↘ '+a).join('  '))}</span></div></div>`;document.getElementById('quick-back').onclick=()=>openCraft(x)}catch(e){$('#craft-body').innerHTML=`<p class="bad-q">Deep Dive is taking a tiny break: ${esc(e.message)}</p><p>Your flashcards still work without AI.</p>`}}
 $('#craft-form').onsubmit=e=>{e.preventDefault();let q=$('#craft-input').value.trim();if(q){$('#craft-input').value='';askCraft(q)}};document.addEventListener('click',e=>{let b=e.target.closest('[data-ask]');if(b)askCraft(b.dataset.ask)});
