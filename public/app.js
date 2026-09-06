@@ -292,7 +292,11 @@ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   prevUtterance=text; lastUtteranceAt=Date.now();
   setVoiceState('thinking','',text);
   const local=localFastpath(text);
-  if(local){ setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''}); }
+  // Only safety controls bypass the orchestrator. Every learning utterance goes
+  // through the page-aware agent so natural phrases can select the right tool.
+  if(local && ['stop','mute','voice_on'].includes(local.tool)){
+    setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''});
+  }
   if(agentBusy)return; agentBusy=true;
   const d=await agentDecide(text); agentBusy=false;
   setVoiceState('listening');

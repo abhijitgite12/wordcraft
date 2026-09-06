@@ -445,7 +445,7 @@ Reply ONLY valid JSON:
  "index":<0-3 if learner chose an option, else null>,
  "verdict":<0 wrong / 1 close / 2 correct when grading a spoken meaning, else null>,
  "done":<true if now wait for the learner, false if continue acting>}
-Do not add text outside the JSON. Do not repeat phrases you already used.`;
+Important routing examples: if the learner says “test me”, “test me out”, “quiz me”, “ask me about this”, or “check my recall” while the current screen is a teach card and next is allowed, choose action “next”. If they say “show me”, “I give up”, or ask for the meaning, choose “reveal”. If they speak a possible definition on a question card, choose “answer_meaning”. Do not add text outside the JSON. Do not repeat phrases you already used.`;
   let last;
   for (const model of modelPool()) {
     try {
