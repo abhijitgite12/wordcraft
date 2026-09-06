@@ -1,6 +1,7 @@
 window.addEventListener('error',e=>{const c=document.querySelector('#card');if(c&&!c.dataset.error){c.dataset.error='1';c.innerHTML='<div class="empty-card"><div class="empty-icon">!</div><h2>Word Craft needs a refresh</h2><p>'+String(e.message||'Please reload the page.').replace(/[<>]/g,'')+'</p><button class="dive-main" onclick="location.reload()">Refresh</button></div>'}});window.addEventListener('unhandledrejection',e=>{console.error(e.reason)});
 let words, score=0, wrong={}, seen={}, craftWord=null, feed=[], fi=0, asked=null, curWord=null, mix='mixed', cat='all';
 const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const shuffle=a=>[...a].sort(()=>Math.random()-.5);
 
 // ---- telemetry: report loaded version + runtime errors to /api/log so we can see real behavior ----
 function tele(e, msg, detail, ctx){ try{ for(const fail of [0]){ void fail; } const ver=(document.currentScript&&document.currentScript.src)||''; fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:e,msg,detail,ver:ver.length?ver.split('/').pop():'',ua:navigator.userAgent,ctx:ctx||''})}).catch(()=>{}); }catch(_){} }
