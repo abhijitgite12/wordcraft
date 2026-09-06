@@ -131,71 +131,13 @@ function currentScreen(){
 function currentWord(){ const c=cur(); return c?.word||null; }
 
 // ---- Local, natural teaching narration (human tutor voice built from real card data) ----
-let narrGuard='', nudgeTimer=null, narratedOnce=false;
-let lastScoreSeen=-1, nudgeRound=0;
-function scheduleNudge(type){
-  if(nudgeTimer)clearTimeout(nudgeTimer); nudgeRound=0;
-  if(!tutorLive||!VOICE.on||type==='relearn')return; // don't nag on teach-back
-  nudgeTimer=setTimeout(()=>{
-    if(!tutorLive||!VOICE.on)return;
-    if(document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;
-    const c=cur(); if(!c)return; if(nudgeRound>=1)return; nudgeRound++;
-    const w=c.word;
-    if(c.type==='test') speak('No rush — pick an option or say it in your own words.');
-    else speak('You can say next, reveal, or deep dive.');
-  }, 7000);
-}
-function cleanTeach(w){
-  const def=String(w.aiDefinition||w.definition||'').trim();
-  const pos=String(w.partOfSpeech||'');
-  const word=w.word;
-  const sy=Array.isArray(w.synonyms)&&w.synonyms.length?'\nIn other words: '+w.synonyms.slice(0,3).join(', '):'';
-  return {word,def,pos,sy};
-}
-// Build a warm, human tutor paragraph for a given moment on the current card.
-// Uses conversation memory (recent right/wrong, repeat count, sentiment) so it speaks like a real person who knows what's happening.
+let narrGuard='';
+let actionReentrant=false;
+// tutorState tracks learner context ONLY to feed the orchestrator (model builds conversation);
+// there are no scripted lines or hints here — the model writes everything.
 const tutorState = { lastCorrect:true, consecutiveMiss:0, streak:0, seenWords:{} };
 function bumpTutor(ev, w){ if(ev==='correct'){ tutorState.lastCorrect=true; tutorState.streak++; tutorState.consecutiveMiss=0; if(w) tutorState.seenWords[w.word]=(tutorState.seenWords[w.word]||0)+1; } else if(ev==='wrong'){ tutorState.lastCorrect=false; tutorState.consecutiveMiss++; if(w) tutorState.seenWords[w.word]=(tutorState.seenWords[w.word]||0)+1; } }
-function tutorLine(w, moment){
-  const {word,def,pos,sy}=cleanTeach(w);
-  const misses=(w.word?tutorState.seenWords[w.word]:0)||0;
-  const pick=a=>a[Math.floor(Math.random()*a.length)];
-  if(moment==='learn'){
-    const p=pos?('a '+pos):'';
-    return pick([`The word is ${word}${pos?', a '+pos:''}.`,`Here's a fresh one — ${word}${pos?', a '+pos:''}.`,`Alright, take a look at ${word}${pos?', a '+pos:''}.`]);
-  }
-  if(moment==='question'){
-    return `Okay, quick test. Which of these best captures ${word}? Pick A, B, C, or D — or, even better, say it in your own words.`;
-  }
-  if(moment==='relearn'){
-    if(misses>1) return `${word} — let's really lock this one in. It means ${def}. ${sy}. Here's the image: ${w.example||'imagine the intensity easing'}. Say it back to me.`;
-    return `${word}${pos?' — a '+pos:''} — means ${def}. ${sy}. Try the example: ${w.example||'picture it winding down.'} Take it in.`;
-  }
-  if(moment==='reveal'){
-    const posL=pos?('a '+pos):'an idea';
-    let l=pick([`So what is ${word}? It's ${pos?('a '+pos+' meaning '):''}${def}.`,
-               `Here's the breakdown on ${word}: it means ${def}, as ${pos?('a '+pos+'.'):'essentially '}`,
-               `${word} — straight from the dictionary — means ${def}, ${posL}.`]);
-    if(w.example) l+=` Picture it: ${w.example}`;
-    if(w.synonyms&&w.synonyms.length) l+=` Its cousins: ${w.synonyms.slice(0,3).join(', ')}.`;
-    if(w.antonyms&&w.antonyms.length) l+=` Its opposite: ${w.antonyms.slice(0,2).join(', ')}.`;
-    return l;
-  }
-  if(moment==='correct'){
-    if(tutorState.streak>=3) return `That's two in a row — ${word} means ${def}, and you nailed it. Keep this energy!`;
-    if(misses>0 && tutorState.lastCorrect) return `Ah, now you've got it. ${word} is ${def}, and it won't be leaving your head now.`;
-    return pick([`That's right — ${word} is ${def}. Crisp recall.`,`Exactly. ${word} means ${def}. You're on it.`,`Well done. ${word} = ${def}, and you read it perfectly.`]);
-  }
-  if(moment==='wrong'){
-    return pick([`Not quite — and that's fine. ${word} is really ${def}. ${w.example?('The image is '+w.example):''} It'll come round again.`,
-                `Don't sweat it. ${word} actually means ${def}. ${w.example?('Think '+w.example):''} We'll give it one more go.`,
-                `Almost. ${word} speaks to ${def}, not what you picked. ${w.example?('See: '+w.example):''} Let it stick.`]);
-  }
-  if(moment==='dive'){ return `Let's go deeper on ${word}. Tell me — explain it plainly, a memory hook, a near-synonym, or ask anything.`; }
-  if(moment==='review'){ return `You've got ${Object.keys(wrong).length} to tidy up. The earlier one, ${word}, stubbed you — let's smooth it out.`; }
-  if(moment==='empty'){ return `Nothing's here. Say reset or tweak the filters and we'll find words.`; }
-  return '';
-}
+
 // Speak a natural teaching line tied to the current card (orchestrator-model written).
 function narrate(moment){
   const w=cur()?.word; if(!w)return;
@@ -235,7 +177,7 @@ function sayOnCardChange(){
   const key=c.type+'|'+c.word.word;
   if(narrGuard===key)return; narrGuard=key;
   orchSay({moment: c.type==='relearn'?'relearn' : c.type==='test'?'question':'learn'}, c.word);
-  scheduleNudge(c.type);
+
 }
 
 // ---- the agent decides the next action with full page context + memory ----
@@ -252,9 +194,13 @@ async function agentDecide(text){
 }
 // ---- act on the agent's decision ----
 async function runAction(d){
+  if(actionReentrant) return; actionReentrant=true;
   const legal=currentTools(); const w=currentWord();
   if(!d||!d.action||!legal.includes(d.action)){
-    speak("I didn't catch that. Try again, or say help."); setVoiceState(VOICE.micOn?'listening':'off'); return;
+    // Let the orchestrator decide how to respond naturally (no canned menu).
+    setVoiceState(VOICE.micOn?'listening':'off');
+    if(cur()?.word) orchSay({moment:'nudge'});
+    return;
   }
   const n=String(d.narration||''); setVoiceState('thinking');
   switch(d.action){
@@ -267,18 +213,19 @@ async function runAction(d){
     case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Faster.');break;
     case 'reveal': showFlip(); if(d.say) speak(d.say,{}); else if(!tutorLive&&w) speak(w.word+' means '+(w.aiDefinition||w.definition||'')); break;
     case 'deep_dive': if(w)openCraft(w); if(d.say)speak(d.say,{}); else if(n)speak(n); break;
-    case 'options': speak(n||(currentOptions().length?currentOptions().map((o,i)=>'Option '+String.fromCharCode(65+i)+'. '+o).join(' '):'You can say next, back, skip, reveal, or help.')); break;
-    case 'help': speak(n||'You can say next, back, skip, reveal, deep dive, or ask me anything.'); break;
+    case 'options': if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'question'}); break;
+    case 'help': if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'nudge'}); break;
     case 'review': showPage('review'); break;
     case 'browse': showPage('browse'); break;
     case 'mute': VOICE.on=false; stopSpeak(); setVoiceState('off'); localStorage.setItem('wordCraftVoiceOn','off'); return;
     case 'voice_on': VOICE.on=true; localStorage.setItem('wordCraftVoiceOn','on'); speak('Voice on.'); break;
-    case 'answer_option': if(typeof d.index==='number'&&cur()?.type==='test'){const o=$$('.option')[d.index];if(o&&!o.classList.contains('disabled'))o.click();} else speak(n||'Which one — A, B, C, or D?'); break;
+    case 'answer_option': if(typeof d.index==='number'&&cur()?.type==='test'){const o=$$('.option')[d.index];if(o&&!o.classList.contains('disabled'))o.click();} else if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'question'}); break;
     case 'answer_meaning': answerFree(d.verdict, n); break;
     case 'yes': if(cur()?.type==='relearn'&&w){delete wrong[w.word];persist();update();move(1);} break;
-    case 'no': speak(n||'Keeping it in review.'); break;
-    default: speak(n||'You can say next, back, skip, reveal, or help.'); break;
+    case 'no': if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'nudge'}); break;
+    default: if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'nudge'}); break;
   }
+  actionReentrant=false;
 }
 // free-spoken meaning: graded by the agent verdict (0 wrong, 1 close, 2 correct)
 function answerFree(verdict, narration){
