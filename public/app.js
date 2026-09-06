@@ -140,6 +140,7 @@ function currentWord(){ const c=cur(); return c?.word||null; }
 // ---- Local, natural teaching narration (human tutor voice built from real card data) ----
 let narrGuard='';
 let actionReentrant=false;
+let prevUtterance='', lastUtteranceAt=0;
 // tutorState tracks learner context ONLY to feed the orchestrator (model builds conversation);
 // there are no scripted lines or hints here — the model writes everything.
 const tutorState = { lastCorrect:true, consecutiveMiss:0, streak:0, seenWords:{} };
@@ -254,7 +255,7 @@ async function handleUtterance(text){
   const d=await agentDecide(text); agentBusy=false;
   setVoiceState('listening');
   if(d) await runAction({action:d.action,index:d.index,verdict:d.verdict??0,query:d.query||'',narration:d.say||d.narration||'',say:d.say||''});
-  else speak("I didn't catch that. Say help.");
+  else if(cur()?.word) orchSay({moment:'nudge'}); // let the orchestrator respond naturally
   // re-listening handled by state
   if(VOICE.micOn) setVoiceState('listening');
 }
