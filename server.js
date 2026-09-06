@@ -125,9 +125,9 @@ async function searchDb(q) {
 // Low-cost paid OpenRouter models. The existing OPENROUTER_API_KEY is reused.
 // Primary is optimized for short tool-routing and tutor turns; fallbacks keep AI resilient.
 const models = [
-  'nvidia/nemotron-3.5-lightning',
-  'google/gemma-4-26b-a4b-it',
-  'qwen/qwen3.5-9b'
+  'google/gemma-4-31b-it:free',
+  'minimax/minimax-m3:free',
+  'z-ai/glm-5.2:free'
 ];
 const freeModels = [
   'google/gemma-4-31b-it:free',
@@ -137,7 +137,7 @@ const freeModels = [
 const PAID_PROBE_MS = 60*60*1000;
 let paidDisabledUntil = 0;
 function isPaidModel(model){ return !model.endsWith(':free'); }
-function aiMode(){ return Date.now()<paidDisabledUntil ? 'free-fallback' : 'paid'; }
+function aiMode(){ return models.every(isPaidModel) ? 'paid' : 'free'; }
 function modelPool(){ return Date.now()<paidDisabledUntil ? freeModels : models; }
 function observeModelFailure(model,status,j){
   const msg=String(j?.error?.message||'').toLowerCase();
@@ -152,7 +152,7 @@ function observeModelSuccess(model){
 }
 
 // Simple per-IP rate limiter for the AI endpoint so a public free host can't be abused.
-const RATE_WINDOW_MS = 60_000, RATE_MAX = 15; const hits = new Map();
+const RATE_WINDOW_MS = 60_000, RATE_MAX = 90; const hits = new Map();
 function rateOk(ip) {
   const now = Date.now(); const h = hits.get(ip) || { n: 0, start: now };
   if (now - h.start > RATE_WINDOW_MS) { h.n = 0; h.start = now; }

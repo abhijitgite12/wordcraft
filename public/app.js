@@ -74,7 +74,7 @@ function nativeSpeak(text){
   window.speechSynthesis.speak(u);
 }
 function nativeStop(){ if(window.speechSynthesis)window.speechSynthesis.cancel(); }
-let guideTimer=null;
+let guideTimer=null, guideKey='';
 function scheduleGuide(){
   if(guideTimer)clearTimeout(guideTimer);
   guideTimer=setTimeout(()=>{ guideTimer=null; tutorGuideStep(); }, 1400);
@@ -82,6 +82,7 @@ function scheduleGuide(){
 // Guided tutor loop: after narrating, advance the lesson one natural step.
 function tutorGuideStep(){
   if(!tutorLive||!VOICE.on||!VOICE.micOn)return;
+  if(guideKey===narrGuard)return; guideKey=narrGuard;
   if(document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;
   const c=cur(); if(!c||!c.word)return;
   const w=c.word; const el=$('#card');
@@ -190,8 +191,11 @@ function narrateOn(moment, w){
   orchSay({moment}, w);
 }
 // Ask the orchestrator to write a natural line + may act. Model picks action.
-let orchToken=0;
+let orchToken=0, orchBusy=false, lastOrchAt=0, lastOrchKey='';
 async function orchSay(payload, w){
+  if(orchBusy) return;                       // never stack orchestrator turns
+  const now=Date.now(); if(now-lastOrchAt<2200) return;  // natural pacing, avoids runaway loops
+  lastOrchAt=now;
   if(!tutorLive&&payload&&!payload.text)return;
   const ww = w || cur()?.word; if(!ww)return;
   const tok=++orchToken;
@@ -205,6 +209,7 @@ async function orchSay(payload, w){
     const r=await fetch('/api/orch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)return; const d=await r.json();
     if(tok!==orchToken)return; // stale (a newer narration superseded this)
+    lastOrchAt=Date.now();
     if(d.say) speak(d.say, {});
     if(d.action && d.action!=='none') await runAction({action:d.action,index:d.index,verdict:d.verdict,narration:d.say||'',say:d.say||''});
     else if(VOICE.micOn) setVoiceState('listening');
