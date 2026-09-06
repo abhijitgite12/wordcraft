@@ -181,3 +181,9 @@ Never commit API keys, Render tokens, passwords, `.env`, or local AI burn progre
 - If `/login` works but CSS/JS hangs, inspect the deployed service runtime and deploy logs with the Render CLI, then manually redeploy the exact Git commit.
 - If AI calls fail, verify `OPENROUTER_API_KEY` in Render's environment variables. Never place it in Git.
 - Required Render environment variables: `APP_PASSWORD`, `OPENROUTER_API_KEY`, `SESSION_SECRET`; production should keep `ALLOW_RW=0`.
+
+## Recent changes (2026-09-06, sec)
+- **Minimal header (design pass).** Header is now just brand ✦ Word Craft · streak 🔥 · one ⚙ gear. Review, Word bank, Help, Sound, Theme (swatch grid), Text size, Tutor voice, About all live in the single settings dropdown. Voice pill & caption stay (live tutor status). Cache-bust now `style.css?v=wordcraft26`, `app.js?v=wordcraft36`.
+- **Search: similarity + semantic (5 + 5).** Similarity bucket = edit-distance/prefix/closest-spelling via `fuzzyResults()`. Semantic bucket = words whose definition/synonyms carry the query idea (`semanticResults()`). Category keyword (GRE/SAT/Core/Academic/General) still starts a quiz chip. Both groups in the top-center search dropdown.
+- **No music autoplay.** Background focus music no longer starts on first pointerdown; only starts when the user presses Play (also stops that "random sound on card load" surprise). Removed `activateDefaultMusic` autoplay.
+- **Silence on voice-off.** Turning voice off (pill/mic) now: bumps `orchToken` (invalidates any tutor narration in flight), calls `stopSpeak()`, and the guided tutor step re-checks `VOICE.on && VOICE.micOn` before acting — so no tutor speech fires after you mute. Previously the pill only stopped listening; the master voice could still talk.
