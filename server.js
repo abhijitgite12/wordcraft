@@ -219,7 +219,7 @@ Rules:
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
-        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:100})
+        body:JSON.stringify({reasoning:{exclude:true},model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:100})
       });
       const j=await r.json();
       if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
@@ -255,7 +255,7 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: {'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:'+PORT, 'X-Title': 'Word Craft'},
-        body: JSON.stringify({model, messages:[{role:'user',content:prompt}], temperature:0.65, max_tokens:700})
+        body: JSON.stringify({reasoning:{exclude:true},model, messages:[{role:'user',content:prompt}], temperature:0.65, max_tokens:700})
       });
       const j = await r.json();
       if (!r.ok) { observeModelFailure(model,r.status,j); last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
@@ -315,7 +315,7 @@ Rules:
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
-        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0,max_tokens:110})
+        body:JSON.stringify({reasoning:{exclude:true},model,messages:[{role:'user',content:prompt}],temperature:0,max_tokens:110})
       });
       const j=await r.json();
       if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
@@ -379,7 +379,7 @@ Return valid JSON ONLY with keys: action, index (number 0-3 or null), verdict (0
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},
-        body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:150})
+        body:JSON.stringify({reasoning:{exclude:true},model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:150})
       });
       const j=await r.json();
       if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
@@ -464,7 +464,7 @@ Interpret the learner's meaning from the current screen, card content, available
   let last;
   for (const model of modelPool()) {
     try {
-      const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:400})});
+      const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json','HTTP-Referer':'http://localhost:'+PORT,'X-Title':'Word Craft'},body:JSON.stringify({reasoning:{exclude:true},model,messages:[{role:'user',content:prompt}],temperature:0.7,max_tokens:400})});
       const j=await r.json(); if(!r.ok){observeModelFailure(model,r.status,j);last=new Error(j.error?.message||`Model error ${r.status}`);continue;}
       observeModelSuccess(model);
       let str=(j.choices?.[0]?.message?.content||'').replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
@@ -513,7 +513,7 @@ Return valid JSON ONLY: {"why":"...","hook":"..."}
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:' + PORT, 'X-Title': 'Word Craft' },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 170 })
+        body: JSON.stringify({ reasoning:{exclude:true},model, messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 170 })
       });
       const j = await r.json();
       if (!r.ok) { observeModelFailure(model, r.status, j); last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
