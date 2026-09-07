@@ -489,6 +489,44 @@ Interpret the learner's meaning from the current screen, card content, available
   return {action:'none', say:sayFallback, index:null, verdict:null, done:true, model:'local-fallback'};
 }
 
+
+// ---- Tutor beat note: one fast LLM call that writes the "why + hook" for a quiz answer. ----
+// The client renders instant local feedback first; this upgrades the panel in place.
+async function tutorNote(body) {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const word = clean(body.word), def = clean(body.definition), result = clean(body.result);
+  const chosen = clean(body.chosen), right = clean(body.right);
+  if (!word || !def) throw new Error('A word and definition are required');
+  const w0 = words.find(x => x.word === word);
+  const localFallback = {
+    why: result === 'correct'
+      ? ('"' + (right || def) + '" fits - ' + word + ' means ' + def)
+      : (word + ' means ' + def + (chosen ? '; "' + chosen + '" is a different idea.' : '.')),
+    hook: (w0 && w0.example) ? w0.example : '', model: 'local-fallback'
+  };
+  const prompt = `You are a witty vocabulary tutor. A learner was quizzed on "${word}" (meaning: "${def}") and answered ${result === 'correct' ? 'CORRECTLY' : 'WRONGLY'}${chosen ? ` (they picked: "${chosen}")` : ''}${right ? ` (right answer: "${right}")` : ''}.
+Return valid JSON ONLY: {"why":"...","hook":"..."}
+- why: 1-2 short sentences that teach the word. For a wrong answer, gently explain why the right answer fits and, if useful, why their pick does not. Never scold, never say "incorrect".
+- hook: one vivid memory hook OR one fresh example sentence using the word. Under 20 words. Make it stick.`;
+  let last;
+  for (const model of modelPool()) {
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST', headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:' + PORT, 'X-Title': 'Word Craft' },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 170 })
+      });
+      const j = await r.json();
+      if (!r.ok) { observeModelFailure(model, r.status, j); last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
+      observeModelSuccess(model);
+      let text = (j.choices?.[0]?.message?.content || '').replace(/^```json\s*/, '').replace(/```\s*$/, '').trim();
+      const p = JSON.parse(text);
+      return { why: clean(p.why || '').slice(0, 240), hook: clean(p.hook || '').slice(0, 160), model };
+    } catch (e) { last = e; }
+  }
+  console.log('[ai] tutor-note local fallback:', String(last && last.message || last).slice(0, 120));
+  return localFallback;
+}
+
 function serve(req,res) {
   const pathname = req.url.split('?')[0];
   const file = pathname === '/' ? 'index.html' : pathname.replace(/^\//,'');
@@ -592,6 +630,13 @@ const server=http.createServer((req,res)=>{
     if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>6000) req.destroy();});
     req.on('end',async()=>{try {send(res,200,await orch(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
+  }
+  // Tutor beat note (why + hook for a quiz answer; client upgrades panel in place)
+  if (req.method==='POST' && route==='/api/tutor-note') {
+    if (!process.env.OPENROUTER_API_KEY) return send(res,503,{error:'AI not configured on server'});
+    if (!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
+    let raw=''; req.on('data',c=>{raw+=c;if(raw.length>4000) req.destroy();});
+    req.on('end',async()=>{try {send(res,200,await tutorNote(JSON.parse(raw)));} catch(e) {send(res,500,{error:e.message});}}); return;
   }
   // List selectable neural voices for the picker
   if (req.method==='GET' && route==='/api/voices') return send(res,200,{voices:VOICE_OPTIONS});
