@@ -51,8 +51,9 @@ async function fetchTTS(text){
   try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, voice:voiceSel})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
 }
 let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
+let recGraceUntil=0, speakSeq=0; // turn-taking: grace window after speech + generation token that kills stale TTS
 const ttsPlayer = document.createElement('audio'); ttsPlayer.preload='auto'; ttsPlayer.muted=true; (ttsPlayer.muted=false);
-function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); return; } if(tutorLive&&VOICE.on&&VOICE.micOn) scheduleGuide(); }
+function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; recGraceUntil=Date.now()+600; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); return; } if(tutorLive&&VOICE.on&&VOICE.micOn) scheduleGuide(); }
 let _nativeVoice=null;
 function pickNativeVoice(){
   if(!window.speechSynthesis)return;
@@ -97,7 +98,24 @@ function tutorGuideStep(){
   }
   // test / relearn -> wait for the learner's answer
 }
-function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
+function stopAllAudio(){ speakSeq++; nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
+// ---- echo guard: is a heard phrase just our own narration coming back through the mic? ----
+function normWords(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean); }
+function looksLikeEcho(heard){
+  const rw=normWords(heard); if(!rw.length) return true;
+  const now=Date.now();
+  const lines=[activeLine, pending, ...talkMemory.filter(m=>now-m.at<12000).map(m=>m.text)];
+  const resNorm=rw.join(' ');
+  for(const line of lines){
+    if(!line) continue;
+    const lw=normWords(line); if(!lw.length) continue;
+    const set=new Set(lw);
+    const hit=rw.filter(w=>set.has(w)).length;
+    if(hit/rw.length>=0.6) return true;                 // mostly our own words
+    if(resNorm.length>3 && lw.join(' ').includes(resNorm)) return true; // verbatim fragment of a spoken line
+  }
+  return false;
+}
 // Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
 async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=false}={}){
   if(!VOICE.on||!text)return;
@@ -109,6 +127,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
   }
   if(speakingBusy && force){ stopAllAudio(); }
   if(!allowRepeat && saidRecently(text)) return;
+  const seq=++speakSeq;
   speakingBusy=true; activeLine=text;
   rememberLine(text);
   setVoiceCaption(text,true); setVoiceState('speaking');
@@ -119,6 +138,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
     ttsFetching=true; const t0=Date.now(); let got=null;
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
+    if(seq!==speakSeq) return; // interrupted while fetching: never resurrect this audio
     if(!got || Date.now()-t0>6000){ if(!activeAudio) nativeSpeak(text); return; }
     const url=URL.createObjectURL(got);
     const a=ttsPlayer; a.src=url; activeAudio=a;
@@ -322,19 +342,27 @@ function startListening(){
   if(!SR){ setVoiceState('off','',"Voice not supported here"); speak("Voice isn't supported in this browser."); VOICE.micOn=false; return; }
   if(!VOICE.on)return;
   const rec=new SR(); rec.lang='en-US'; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
-  rec.onstart=()=>setVoiceState('listening');
-  rec.onspeechstart=()=>setVoiceState('listening');
-  rec.onspeechend=()=>{ if(VOICE.micOn) setVoiceState('listening'); };
+  rec.onstart=()=>{ if(!speakingBusy && Date.now()>=recGraceUntil) setVoiceState('listening'); };
+  rec.onspeechstart=()=>{ if(!speakingBusy && Date.now()>=recGraceUntil) setVoiceState('listening'); };
+  rec.onspeechend=()=>{ if(VOICE.micOn && !speakingBusy) setVoiceState('listening'); };
   rec.onresult=e=>{
-    let interim='',final='';
     let f='',im='';
     for(let i=e.resultIndex;i<e.results.length;i++){ const tr=e.results[i][0].transcript; if(e.results[i].isFinal) f+=(' '+tr); else im+=(' '+tr); }
-    final=f.trim(); interim=im.trim();
-    setVoiceCaption(final||interim,false);
+    const final=f.trim(), interim=im.trim(), heard=final||interim;
+    // Turn-taking: while the app speaks (and for a beat after), its own voice echoes
+    // back through the mic. Echo is dropped completely; a clearly non-echo final is
+    // the user cutting in (barge-in): stop talking and listen.
+    if(speakingBusy || VOICE.state==='speaking' || Date.now()<recGraceUntil){
+      if(!heard || looksLikeEcho(heard)) return;
+      if(!final){ setVoiceCaption(interim,false); return; }
+      stopSpeak(); recGraceUntil=0;
+      setVoiceState('thinking','',final); handleUtterance(final); return;
+    }
+    setVoiceCaption(heard,false);
     if(final){ setVoiceState('thinking','',final); handleUtterance(final); }
     else setVoiceState('listening');
   };
-  rec.onerror=e=>{ if(e.error==='not-allowed'||e.error==='service-not-allowed'){ VOICE.micOn=false; setVoiceState('off'); } else setVoiceState('listening'); };
+  rec.onerror=e=>{ if(e.error==='not-allowed'||e.error==='service-not-allowed'){ VOICE.micOn=false; setVoiceState('off'); } else if(VOICE.micOn && !speakingBusy) setVoiceState('listening'); };
   rec.onend=()=>{ if(VOICE.micOn) startListening(); };
   rec.start(); VOICE.rec=rec;
 }
@@ -349,13 +377,13 @@ function toggleMic(on){
 }
 function initVoiceUI(){
   const btn=$('#voice-btn'), pill=$('#voice-pill');
-  const toggle=()=>toggleMic(!VOICE.micOn);
+  const toggle=()=>{ if(VOICE.micOn && (speakingBusy||VOICE.state==='speaking')){ stopSpeak(); recGraceUntil=Date.now()+250; setVoiceState('listening'); return; } toggleMic(!VOICE.micOn); };
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
   const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; if(d&&d.voices&&d.voices.length){ vs.innerHTML=d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''); if(!d.voices.includes(voiceSel)){ voiceSel=d.voices[0]; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} } } vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
  humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hey - this is '+voiceSel.replace(/^en-US-/,'').replace(/MultilingualNeural$/,'').replace(/Neural$/,'')+'. Keep this one?',{human:true,allowRepeat:true,force:true,forceHuman:true}); }; }
   const input=$('#voice-input'); const form=$('#voice-form');
-  if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
+  if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){ if(speakingBusy)stopSpeak(); handleUtterance(v); input.value='';}};
   setVoiceState('off');
 }
 
