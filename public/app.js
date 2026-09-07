@@ -39,7 +39,7 @@ function setVoiceCaption(text,asAssistant){
   cap.classList.toggle('hidden',!text);
 }
 // ---- serialized human-voice speech (Edge-TTS) with native fallback ----
-const humanVoice = { on: localStorage.getItem('wordCraftHuman')==='on' }; // default OFF = fast native voice (on = premium Edge-TTS)
+const humanVoice = { on: localStorage.getItem('wordCraftHuman')!=='off' }; // default ON: the picked voice is THE voice everywhere; explicit off = fast native
 // ---- smart "know when to speak" memory: track recent tutor lines so it never repeats itself ----
 const talkMemory=[];
 function rememberLine(text){ talkMemory.push({text, at:Date.now()}); if(talkMemory.length>40) talkMemory.shift(); }
@@ -48,21 +48,28 @@ function base64ToBlob(b64){ const bin=atob(b64), buf=new Uint8Array(bin.length);
 let voiceSel = localStorage.getItem('wordCraftVoiceSel')||'en-US-AriaNeural';
 function friendlyVoice(v){ const map={'en-US-AriaNeural':'Aria (female)','en-US-GuyNeural':'Guy (male)','en-US-JennyNeural':'Jenny (female)','en-US-EmmaNeural':'Emma (female)','en-US-BrianNeural':'Brian (male)','en-US-AvaNeural':'Ava (female)','en-US-AndrewMultilingualNeural':'Andrew (male)','en-US-ChristopherNeural':'Christopher (male)','en-US-MichelleNeural':'Michelle (female)','en-US-EricNeural':'Eric (male)'}; return map[v]||v; }
 async function fetchTTS(text){
-  try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, voice:voiceSel})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
+  try{ const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, voice:voiceSel, rate:VOICE.rate||1})}); if(!r.ok)return null; const d=await r.json(); return d.audio?base64ToBlob(d.audio):null; }catch(e){return null}
 }
 let speakingBusy=false, activeLine='', pending='', ttsFetching=false, activeAudio=null;
 let recGraceUntil=0, speakSeq=0; // turn-taking: grace window after speech + generation token that kills stale TTS
 const ttsPlayer = document.createElement('audio'); ttsPlayer.preload='auto'; ttsPlayer.muted=true; (ttsPlayer.muted=false);
 function finishLine(){ speakingBusy=false; activeLine=''; activeAudio=null; recGraceUntil=Date.now()+600; if(VOICE.micOn)setVoiceState('listening'); if(pending){ const p=pending; pending=''; speak(p,{force:true,human:true}); return; } if(tutorLive&&VOICE.on&&VOICE.micOn) scheduleGuide(); }
 let _nativeVoice=null;
+const VOICE_GENDER={'en-US-AriaNeural':'f','en-US-JennyNeural':'f','en-US-EmmaNeural':'f','en-US-AvaNeural':'f','en-US-MichelleNeural':'f','en-US-GuyNeural':'m','en-US-BrianNeural':'m','en-US-AndrewMultilingualNeural':'m','en-US-ChristopherNeural':'m','en-US-EricNeural':'m'};
+const FEM_NAME=/female|aria|jenny|emma|ava|michelle|samantha|victoria|zira|susan|allison|kate|serena|sonia|catherine/i;
+const MAL_NAME=/male|guy|brian|andrew|christopher|eric|david|daniel|alex|fred|george|ryan|thomas|james|mark|ravi/i;
 function pickNativeVoice(){
-  if(!window.speechSynthesis)return;
+  if(!window.speechSynthesis)return null;
+  if(_nativeVoice)return _nativeVoice;
   const vs=window.speechSynthesis.getVoices?window.speechSynthesis.getVoices():[];
-  if(!_nativeVoice && vs.length){
-    _nativeVoice= vs.find(v=>/en-US|en_GB|en-GB/.test(v.lang))|| vs[0] || null;
-  }
+  if(!vs.length)return null;
+  const want=VOICE_GENDER[voiceSel]||'f';
+  const en=vs.filter(v=>/^en([-_].*)?$/i.test(v.lang));
+  const matchGender=v=> want==='f' ? (FEM_NAME.test(v.name)&&!MAL_NAME.test(v.name)) : MAL_NAME.test(v.name);
+  _nativeVoice = en.find(v=>/en-US/i.test(v.lang)&&matchGender(v)) || en.find(matchGender) || en.find(v=>/en-US/i.test(v.lang)) || en[0] || vs[0] || null;
   return _nativeVoice;
 }
+if(window.speechSynthesis && window.speechSynthesis.addEventListener){ window.speechSynthesis.addEventListener('voiceschanged',()=>{ _nativeVoice=null; }); }
 function nativeSpeak(text){
   if(!window.speechSynthesis)return;
   pickNativeVoice();
@@ -131,8 +138,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
   speakingBusy=true; activeLine=text;
   rememberLine(text);
   setVoiceCaption(text,true); setVoiceState('speaking');
-  const brief=text.length<45;
-  const useHuman=human && humanVoice.on && (forceHuman || !brief) && !!window.fetch && !ttsFetching;
+  const useHuman=human && humanVoice.on && !!window.fetch; // one voice everywhere: the selected Edge voice speaks every line
 // useHuman: reuse one global audio element (unlocked by the mic-click gesture) to avoid autoplay block.
   if(useHuman){
     ttsFetching=true; const t0=Date.now(); let got=null;
@@ -396,7 +402,7 @@ function initVoiceUI(){
   const toggle=()=>{ if(VOICE.micOn && (speakingBusy||VOICE.state==='speaking')){ stopSpeak(); recGraceUntil=Date.now()+250; setVoiceState('listening'); return; } toggleMic(!VOICE.micOn); };
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
-  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; if(d&&d.voices&&d.voices.length){ vs.innerHTML=d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''); if(!d.voices.includes(voiceSel)){ voiceSel=d.voices[0]; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} } } vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
+  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; if(d&&d.voices&&d.voices.length){ vs.innerHTML=d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''); if(!d.voices.includes(voiceSel)){ voiceSel=d.voices[0]; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} } } vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; _nativeVoice=null; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
  humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hey - this is '+voiceSel.replace(/^en-US-/,'').replace(/MultilingualNeural$/,'').replace(/Neural$/,'')+'. Keep this one?',{human:true,allowRepeat:true,force:true,forceHuman:true}); }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){ if(speakingBusy)stopSpeak(); handleUtterance(v); input.value='';}};

@@ -177,14 +177,18 @@ function checkTTS(){ try{ execFileSync('python3',['-c','import edge_tts'],{timeo
 const ttsCache = new Map(); const TTS_MAX = 400;
 const VOICES = process.env.TTS_VOICE || 'en-US-AriaNeural';
 const VOICE_OPTIONS = ['en-US-AriaNeural','en-US-GuyNeural','en-US-JennyNeural','en-US-EmmaNeural','en-US-BrianNeural','en-US-AvaNeural','en-US-AndrewMultilingualNeural','en-US-ChristopherNeural','en-US-MichelleNeural','en-US-EricNeural'];
-async function tts(text, voice){
+async function tts(text, voice, rate){
   const v = (voice && (VOICE_OPTIONS.includes(voice)||VOICES.includes(voice))) ? voice : VOICES;
-  const key = (v)+'::'+text;
+  const pct = Math.max(-50, Math.min(100, Math.round(((+rate||1)-1)*100))); // client rate 0.5-2.0 -> edge-tts -50%..+100%
+  const rateArg = (pct>=0?'+':'')+pct+'%';
+  const key = v+'@'+rateArg+'::'+text;
   if (ttsCache.has(key)) return {buf:ttsCache.get(key), key, cached:true};
   const mp3 = path.join(cacheDir, Math.random().toString(36).slice(2)+'.mp3');
+  const args = ['-m','edge_tts','--voice',v,'--text',text,'--write-media',mp3];
+  if (pct!==0) args.push('--rate='+rateArg);
   // Non-blocking: spawn edge-tts async so the event loop (other requests) stays responsive.
   await new Promise((resolve,rej)=>{
-    execFile('python3',['-m','edge_tts','--voice',v,'--text',text,'--write-media',mp3],{timeout:15000},(err)=>{
+    execFile('python3',args,{timeout:15000},(err)=>{
       if(err) rej(err); else resolve();
     });
   }).then(()=>{},
@@ -645,12 +649,12 @@ const server=http.createServer((req,res)=>{
     let raw=''; req.on('data',c=>{raw+=c; if(raw.length>4000) req.destroy();});
     req.on('end',async()=>{
       try{
-        const {text='', voice=''}=JSON.parse(raw||'{}');
+        const {text='', voice='', rate=1}=JSON.parse(raw||'{}');
         const t=String(text).trim().slice(0,500);
         if(!t) return send(res,400,{error:'text required'});
         if(!ttsReady) return send(res,501,{error:'TTS unavailable'});
         if(!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
-        const r=await tts(t, voice);
+        const r=await tts(t, voice, rate);
         send(res,200,{audio:bufToBase64(r.buf), key:r.key, cached:r.cached, voice:r.voice||''});
       }catch(e){ send(res,500,{error:e.message}); }
     }); return;
