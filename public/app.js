@@ -477,7 +477,6 @@ const BEAT_CHEERS=['Nailed it.','Sharp.','Exactly right.','Clean hit.','That\'s 
 const BEAT_MISSES=['Not quite.','Close, but no.','That one slipped.','Good swing, wrong ball.'];
 const pickBeat=a=>a[Math.random()*a.length|0];
 function streakLine(){ return tutorState.streak>=3?(' That\'s '+tutorState.streak+' in a row.'):'' }
-function optionLetter(i){ return (i>=0&&i<4)?String.fromCharCode(65+i):'?' }
 // Fetch the AI tutor note (why + hook). Null when unreachable - panel keeps local content.
 const tutorNoteCache={};
 async function fetchTutorNote(w,res){
@@ -501,7 +500,7 @@ function tutorBeat(w,res){
   clearBeat();
   const def=displayDef(w);
   const cheer=res.correct?pickBeat(BEAT_CHEERS):pickBeat(BEAT_MISSES);
-  const defaultHead=res.correct ? (cheer+streakLine()) : (cheer+(typeof res.rightIdx==='number'&&res.rightIdx>=0?(' The answer is '+optionLetter(res.rightIdx)+'.'):''));
+  const defaultHead=res.correct ? (cheer+streakLine()) : (cheer+(typeof res.rightIdx==='number'&&res.rightIdx>=0?(' The answer is option '+String(res.rightIdx+1)+'.'):''));
   const head=res.headline||defaultHead;
   box.className='tutor-beat show '+(res.correct?'good':'bad');
   box.innerHTML=
