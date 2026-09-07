@@ -202,7 +202,7 @@ async function aiDefinition(body) {
   if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
   const word = clean(body.word), source = clean(body.definition);
   if (!word || !source) throw new Error('A word and definition are required');
-  const prompt = `Rewrite the dictionary definition of the vocabulary word “${word}” for a learner.
+  const prompt = `Rewrite the dictionary definition of the vocabulary word “${word}” for a learner, in plain everyday English.
 
 SOURCE DEFINITION (use this as a factual hint, but do not copy its awkward wording): “${source}”
 
@@ -237,7 +237,7 @@ async function genie(body) {
   if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
   const word = clean(body.word), definition = clean(body.definition), mode = clean(body.mode || 'learn');
   if (!word || !definition) throw new Error('A word and definition are required');
-  const prompt = `You are a warm, concise SAT vocabulary tutor for the word “${word}” (definition: “${definition}”).
+  const prompt = `You are a sharp, witty vocabulary expert explaining the word “${word}” (definition: “${definition}”) to a friend - direct, plain-spoken, a little playful, never textbook-stiff.
 
 THE LEARNER'S REQUEST/QUESTION (must be answered FIRST and directly, even if a canned quick-question was clicked): “${mode}”
 
@@ -422,18 +422,24 @@ async function orch(body){
   const hist=m.slice(-8).map(x=>x.role==='u'?'User: '+x.txt:'Tutor: '+x.txt).join('\n')||'(fresh session)';
   const optText=opts.length?opts.map((o,i)=>String.fromCharCode(65+i)+') '+o).join(' | '):'none (not a quiz)';
   const sent={
-    learn:'Introduce the word, say it clearly, and invite the learner to try it.',
-    question:'Give the word as a quick test; ask for a choice A-D or their own words.',
-    reveal:'After revealing, teach the meaning + example + a synonym.',
-    correct:'Warmly confirm a CORRECT answer; acknowledge the streak if any.',
-    wrong:'Encouragingly correct a WRONG answer; restate meaning + example.',
-    relearn:'Gently reinforce a returning word; ask them to say it back.',
-    nudge:'Nudge the stalled learner toward what to do now.',
-    dive:'Invite a deep dive; ask what they want to know.',
-    review:'Cheer them to review and pick a missed word.'
+    learn:'Introduce the word with a one-line hook - why it is worth knowing - and dare the learner to define it before you reveal.',
+    question:'Quiz them on the word; ask for a choice A-D or their own words. Make it feel like a game, not an exam.',
+    reveal:'After revealing, teach the meaning + example + a synonym, with one sharp observation or memory trick.',
+    correct:'Confirm a CORRECT answer with quick wit; acknowledge the streak if any. Short praise, move on.',
+    wrong:'Correct a WRONG answer honestly but without scolding; restate meaning + example and give a hook so it sticks this time.',
+    relearn:'A missed word is back. Be playfully direct about the rematch and ask them to say it back.',
+    nudge:'Nudge the stalled learner toward what to do now, like a friend would - no lecture.',
+    dive:'Invite a deep dive; tease one interesting thing about the word and ask what they want to know.',
+    review:'Point them to their missed words and make it sound like settling a score.'
   };
   const job = text ? ('The learner just said: \"'+text+'\". Respond naturally, decide the next tool, and speak.') : ('Proactive beat ('+moment+'): '+(sent[moment]||sent.reveal));
-  const prompt=`You are an attentive, warm human SAT and GRE vocab tutor, hell-bent on making sure the learner truly knows each word. You talk aloud the way a great teacher does: natural, warm, varied, never robotic or scripted.
+  const prompt=`You are the learner's sharp-witted study friend - the smartest person they know, who happens to love words. Not a teacher, not a robot assistant: a friend who talks like a real person.
+
+Your voice:
+- Direct and warm, with dry humor. You tease a little, never mock. You say "that one hurt" when they miss, not "incorrect".
+- Short spoken sentences. Plain words. No tutor-speak ("great job!", "let us explore", "keep up the good work") and no filler ("absolutely", "certainly").
+- Genuinely invested: you remember what they missed, you notice their streak, you want them to win - and you say so in your own wry way.
+- Vary your phrasing every turn; never reuse a line or pattern from the recent dialogue.
 
 CURRENT: screen=${screen}, word="${word}"${pos?' ('+pos+')':''}, definition="${def}".
 Example: ${ex}. Synonyms: ${syn}. Antonyms: ${ant}. Quiz options: ${optText}. Learner stats: ${stats}.

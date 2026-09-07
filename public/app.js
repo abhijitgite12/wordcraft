@@ -99,7 +99,7 @@ function tutorGuideStep(){
 }
 function stopAllAudio(){ nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
 // Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
-async function speak(text,{force=false,human=true,allowRepeat=false}={}){
+async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=false}={}){
   if(!VOICE.on||!text)return;
   text=String(text).trim(); if(!text)return;
   if(speakingBusy && !force){
@@ -113,13 +113,13 @@ async function speak(text,{force=false,human=true,allowRepeat=false}={}){
   rememberLine(text);
   setVoiceCaption(text,true); setVoiceState('speaking');
   const brief=text.length<45;
-  const useHuman=human && humanVoice.on && !brief && !!window.fetch && !ttsFetching;
+  const useHuman=human && humanVoice.on && (forceHuman || !brief) && !!window.fetch && !ttsFetching;
 // useHuman: reuse one global audio element (unlocked by the mic-click gesture) to avoid autoplay block.
   if(useHuman){
     ttsFetching=true; const t0=Date.now(); let got=null;
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
-    if(!got || Date.now()-t0>1500){ if(!activeAudio) nativeSpeak(text); return; }
+    if(!got || Date.now()-t0>6000){ if(!activeAudio) nativeSpeak(text); return; }
     const url=URL.createObjectURL(got);
     const a=ttsPlayer; a.src=url; activeAudio=a;
     a.onended=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
@@ -352,8 +352,8 @@ function initVoiceUI(){
   const toggle=()=>toggleMic(!VOICE.micOn);
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
-  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; vs.innerHTML=(d&&d.voices?d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''):vs.innerHTML); vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
- humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hello! This is the '+voiceSel.replace(/^en-US-/,'').replace(/Neural$/,'')+' voice.',{human:true,allowRepeat:true,force:true}); }; }
+  const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; if(d&&d.voices&&d.voices.length){ vs.innerHTML=d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''); if(!d.voices.includes(voiceSel)){ voiceSel=d.voices[0]; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} } } vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
+ humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hey - this is '+voiceSel.replace(/^en-US-/,'').replace(/MultilingualNeural$/,'').replace(/Neural$/,'')+'. Keep this one?',{human:true,allowRepeat:true,force:true,forceHuman:true}); }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){handleUtterance(v);input.value='';}};
   setVoiceState('off');
@@ -432,9 +432,11 @@ CARD.addEventListener('touchstart',e=>{if(e.target.closest('button,.option')||CA
 CARD.addEventListener('touchmove',e=>{if(!drag||drag.id!=='touch')return;const t=e.changedTouches[0];const dx=t.clientX-drag.startX,dy=t.clientY-drag.startY;if(!drag.axisLocked&&Math.hypot(dx,dy)>8){if(Math.abs(dy)>Math.abs(dx)*1.15){drag.axisLocked='vertical';return}drag.axisLocked='horizontal'}if(drag.axisLocked==='horizontal'){e.preventDefault();dragMove({pointerId:'touch',clientX:t.clientX,clientY:t.clientY,preventDefault:()=>e.preventDefault()})}},{passive:false});
 CARD.addEventListener('touchend',e=>{if(!drag||drag.id!=='touch')return;const t=e.changedTouches[0];dragEnd({pointerId:'touch',clientX:t.clientX,clientY:t.clientY})},{passive:true});
 CARD.addEventListener('touchcancel',e=>{if(drag?.id==='touch'){springCard();drag=null;CARD.classList.remove('dragging')}},{passive:true});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;const m=$('#settings-menu');if(m&&m.classList.contains('open')){m.classList.remove('open');$('#settings-btn').classList.remove('open')}$('#craft-panel')?.classList.remove('open');$('#help-panel')?.classList.remove('open');const vp=$('#version-pop');if(vp)vp.hidden=true;const ts=$('#ts-results');if(ts)ts.hidden=true;});
 document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;let n=Number(e.key);if(n>=1&&n<=4){let o=$$('.option')[n-1];if(o&&!o.classList.contains('disabled'))o.click();return}if(e.key==='ArrowRight')move(1);if(e.key==='ArrowLeft')move(-1);if(e.key===' '){if($('#card').querySelector('.face'))showFlip();else move(1)}});
 function openCraft(x){recordInteraction('deep-dive','open '+(x?.word||''));craftWord=x;let c=$('#craft-panel');c.classList.add('open');$('#craft-sub').textContent=`Exploring “${x.word}”`;$('#craft-body').innerHTML=`<div class="steps"><p class="step-head">Quick questions</p><div class="prompt-chips"><button data-ask="Explain it simply and give a vivid example.">1. Explain</button><button data-ask="Give a fun memory hook.">2. Memory</button><button data-ask="Contrast this word with a near-synonym.">3. Near-syn</button><button data-ask="Ask me two deeper questions.">4. Test me</button><button data-ask="Show this in novels or history.">5. In the wild</button></div><p class="step-head or">OR ask anything</p></div>`;if(tutorLive)narrateOn('dive',x)}
 $('#close-craft').onclick=()=>$('#craft-panel').classList.remove('open');
+document.addEventListener('click',e=>{const p=$('#craft-panel');if(p&&p.classList.contains('open')&&!e.target.closest('#craft-panel')&&!e.target.closest('[data-dive]'))p.classList.remove('open')});
 async function askCraft(q){let x=craftWord||words.find(w=>w.word===curWord)||pick();$('#craft-body').innerHTML='<p>✦ thinking…</p>';try{let r=await fetch('/api/genie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word:x.word,definition:x.definition,mode:q})});let d=await r.json();if(!r.ok)throw Error(d.error);$('#craft-body').innerHTML=`<div class="answer"><button class="quick-back" id="quick-back">← Quick questions</button><div class="direct-answer"><span class="answer-kicker">ANSWER</span><p>${highlightIn(x.word,d.directAnswer||d.explanation||'')}</p></div><div class="block"><strong>Plain English</strong><br>${highlightIn(x.word,d.explanation||'')}</div><div class="block"><strong>Try it</strong><br><i>${highlightIn(x.word,d.example||'')}</i></div><div class="block"><strong>Memory hook</strong><br>${highlightIn(x.word,d.memoryHook||'')}</div><div class="block"><strong>Think deeper</strong><br>${highlightIn(x.word,d.deeperQuestion||'')}</div><div class="block"><strong>Context</strong><br>${highlightIn(x.word,d.contextNote||'')}</div><div class="block"><strong>Related</strong><br><span class="syn">${esc((d.synonyms||[]).map(s=>'↗ '+s).join('  '))}</span> <span class="ant">${esc((d.antonyms||[]).map(a=>'↘ '+a).join('  '))}</span></div></div>`;document.getElementById('quick-back').onclick=()=>openCraft(x)}catch(e){$('#craft-body').innerHTML=`<p class="bad-q">Deep Dive is taking a tiny break: ${esc(e.message)}</p><p>Your flashcards still work without AI.</p>`}}
 $('#craft-form').onsubmit=e=>{e.preventDefault();let q=$('#craft-input').value.trim();if(q){$('#craft-input').value='';askCraft(q)}};document.addEventListener('click',e=>{let b=e.target.closest('[data-ask]');if(b)askCraft(b.dataset.ask)});
 let fontSize=Number(localStorage.getItem('wordCraftFont')||135);function applyFontSize(){fontSize=Math.max(85,Math.min(140,fontSize));document.documentElement.style.setProperty('--fs',fontSize/100);$('#fs-label').textContent=fontSize+'%';try{localStorage.setItem('wordCraftFont',fontSize)}catch(e){}}$('#fs-minus').onclick=e=>{e.stopPropagation();fontSize-=10;applyFontSize()};$('#fs-plus').onclick=e=>{e.stopPropagation();fontSize+=10;applyFontSize()};
@@ -465,7 +467,8 @@ if(vclose)vclose.onclick=()=>{vpop.hidden=true;};
 if(vpop)vpop.onclick=e=>{ if(e.target===vpop)vpop.hidden=true; };
 document.addEventListener('click',e=>{ if(vpop&&!e.target.closest('#version-btn')&&!e.target.closest('.version-pop')) vpop.hidden=true; });
 function refreshThemeSwatches(){const cur=document.body.dataset.theme;$$('#settings-menu .sm-swatches [data-theme]').forEach(b=>b.classList.toggle('on',b.dataset.theme===cur));}
-$('#settings-btn').onclick=e=>{$('#settings-menu').classList.toggle('open');setTimeout(refreshThemeSwatches,0);e.stopPropagation()};$('#settings-btn').onpointerdown=e=>e.stopPropagation();
+$('#settings-btn').onclick=e=>{const m=$('#settings-menu');const opening=!m.classList.contains('open');m.classList.toggle('open');$('#settings-btn').classList.toggle('open',opening);if(opening)setTimeout(refreshThemeSwatches,0);e.stopPropagation()};$('#settings-btn').onpointerdown=e=>e.stopPropagation();
+document.addEventListener('click',e=>{const m=$('#settings-menu');if(m&&m.classList.contains('open')&&!e.target.closest('#settings-menu')&&!e.target.closest('#settings-btn')){m.classList.remove('open');$('#settings-btn').classList.remove('open')}});
 $$('#settings-menu .sm-swatches [data-theme]').forEach(b=>b.onclick=()=>{document.body.dataset.theme=b.dataset.theme;try{localStorage.setItem('satSparkTheme',b.dataset.theme);}catch(e){}refreshThemeSwatches()});
 // Real classical recordings from Wikimedia Commons. Compositions are public domain;
 // individual recordings carry the credit/license shown in the sound menu.
