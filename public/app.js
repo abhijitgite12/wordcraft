@@ -566,17 +566,21 @@ function wordMatches(said,opt){ const s=stemWord(said),o=stemWord(opt); if(!s||!
 function matchOptionByContent(text){
   const all=[...$$('.option')]; const opts=all.filter(o=>!o.classList.contains('disabled')); if(!opts.length)return null;
   const said=normWords(text).filter(w=>!OPT_STOP.has(w)&&w.length>2); if(!said.length)return null;
-  let bestIdx=null,bestHits=0,bestCov=0;
-  for(const o of opts){
-    const ow=normWords(o.dataset.a||o.textContent).filter(w=>!OPT_STOP.has(w)&&w.length>2); if(!ow.length)continue;
-    const hits=ow.filter(w=>said.some(s=>wordMatches(s,w))).length; if(!hits)continue;
-    const cov=hits/ow.length;
-    if(hits>bestHits||(hits===bestHits&&cov>bestCov)){ bestIdx=all.indexOf(o); bestHits=hits; bestCov=cov; }
-  }
+  const owList=opts.map(o=>normWords(o.dataset.a||o.textContent).filter(w=>!OPT_STOP.has(w)&&w.length>2));
+  let bestIdx=null,bestHits=0,bestCov=0,bestDist=false;
+  opts.forEach((o,k)=>{
+    const ow=owList[k]; if(!ow.length)return;
+    const hitsW=ow.filter(w=>said.some(s=>wordMatches(s,w))); if(!hitsW.length)return;
+    const cov=hitsW.length/ow.length;
+    // distinctive: a matched word that no other option contains - saying it clearly points here
+    const dist=hitsW.some(w=>!owList.some((other,j)=>j!==k&&other.some(x=>wordMatches(w,x))));
+    const hits=hitsW.length;
+    if(hits>bestHits||(hits===bestHits&&cov>bestCov)){ bestIdx=all.indexOf(o); bestHits=hits; bestCov=cov; bestDist=dist; }
+  });
   if(bestIdx===null)return null;
   const ow=normWords(all[bestIdx].dataset.a||'').filter(w=>!OPT_STOP.has(w)&&w.length>2);
-  if(ow.length===1)return bestIdx;                  // single-word option (synonym/antonym quiz): one hit is the whole option
-  return (bestHits>=2||bestCov>=0.6)?bestIdx:null;  // phrase option: need real overlap, not one stray word
+  if(ow.length===1)return bestIdx;   // single-word option (synonym/antonym quiz): one hit is the whole option
+  return (bestHits>=2||bestCov>=0.6||bestDist)?bestIdx:null;
 }
 // Voice answer reflex: on a quiz card, a spoken option pick NEVER waits for the model.
 // Handles "option 3", "mark option 3", "I mean mark option 3", "the third one", "c", "go with 2".
