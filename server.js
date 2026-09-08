@@ -86,6 +86,7 @@ function persistEnrich(word, enrich) {
   if (enrich.aiDefinition) w.aiDefinition = enrich.aiDefinition;
   if (enrich.example) w.example = enrich.example;
   if (enrich.synonyms) w.synonyms = enrich.synonyms;
+  if (enrich.etymology) w.etymology = enrich.etymology;
   if (enrich.antonyms) w.antonyms = enrich.antonyms;
   if (!ALLOW_RW) return;
   try {
@@ -240,10 +241,13 @@ Rules:
   }
   throw last||new Error('No free model responded');
 }
+const genieCache = new Map(); const GENIE_MAX = 300; // word|mode -> answer; repeat dives are instant
 async function genie(body) {
   if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
   const word = clean(body.word), definition = clean(body.definition), mode = clean(body.mode || 'learn');
   if (!word || !definition) throw new Error('A word and definition are required');
+  const gck = word.toLowerCase() + '|' + mode.toLowerCase();
+  if (genieCache.has(gck)) return { ...genieCache.get(gck), cached: true };
   const prompt = `You are a sharp, witty vocabulary expert explaining the word “${word}” (definition: “${definition}”) to a friend - direct, plain-spoken, a little playful, never textbook-stiff.
 
 THE LEARNER'S REQUEST/QUESTION (must be answered FIRST and directly, even if a canned quick-question was clicked): “${mode}”
@@ -251,18 +255,21 @@ THE LEARNER'S REQUEST/QUESTION (must be answered FIRST and directly, even if a c
 Rules:
 1. If the request is a specific question (e.g. “How is X the opposite of voracious?”), lead by answering THAT exact question clearly and directly, and honestly flag if the premise is inaccurate rather than silently agreeing.
 2. Then provide the remaining fields.
-Return valid JSON ONLY with exactly these keys: directAnswer, explanation, example, memoryHook, deeperQuestion, contextNote, synonyms, antonyms.
-- 'directAnswer': a concise 1-3 sentence answer to the learner's exact request. It must be different in substance depending on the request: explain means plain English; memory means a memorable hook; near-syn means a direct contrast; test me means a mini-question or two; in the wild means useful context.
+Return valid JSON ONLY with exactly these keys: directAnswer, explanation, example, memoryHook, deeperQuestion, deeperAnswer, etymology, contextNote, synonyms, antonyms.
+- 'directAnswer': a concise 1-3 sentence answer to the learner's exact request. It must be different in substance depending on the request: explain means plain English; memory means a memorable hook; near-syn means a direct contrast; test me means one quick quiz question (no answer revealed); in the wild means useful context; origin means the etymology story.
 - 'explanation': supporting teaching content after the direct answer; distinguish the word from a related term if relevant.
 - 'synonyms' and 'antonyms': arrays of 2-4 SHORT strings. Antonyms must be TRUE opposites of this exact word (e.g. voracious → sated/satisfied, NOT indifferent). If a true antonym is not sensible use an empty array.
 - 'example': vivid original sentence.
+- 'deeperQuestion': one quick, fun self-test question about the word (do NOT include the answer in it).
+- 'deeperAnswer': the short answer to deeperQuestion.
+- 'etymology': the word's true origin story in 1-2 lively sentences - the language it came from, the root pieces, and how the meaning evolved. Use widely accepted etymology only; if the origin is genuinely uncertain, say so honestly in one clause rather than inventing a tidy story. Never fabricate a root.
 - 'contextNote': if mentioning a book, label as an example of usage, never claim the exact word appears there; do not invent quotations.`;
   let last;
   for (const model of modelPool()) {
     try {
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: {'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:'+PORT, 'X-Title': 'Word Craft'},
-        body: JSON.stringify({reasoning:{exclude:true},model, messages:[{role:'user',content:prompt}], temperature:0.65, max_tokens:700})
+        body: JSON.stringify({reasoning:{exclude:true},model, messages:[{role:'user',content:prompt}], temperature:0.65, max_tokens:1400})
       });
       const j = await r.json();
       if (!r.ok) { observeModelFailure(model,r.status,j); last = new Error(j.error?.message || `Model error ${r.status}`); continue; }
@@ -270,7 +277,9 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
       let text = j.choices?.[0]?.message?.content || '';
       text = text.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       const parsed = JSON.parse(text);
-      persistEnrich(word, { example: parsed.example||null, synonyms: parsed.synonyms&&parsed.synonyms.length? parsed.synonyms.slice(0,4) : null, antonyms: parsed.antonyms&&parsed.antonyms.length? parsed.antonyms.slice(0,4) : null });
+      persistEnrich(word, { example: parsed.example||null, synonyms: parsed.synonyms&&parsed.synonyms.length? parsed.synonyms.slice(0,4) : null, antonyms: parsed.antonyms&&parsed.antonyms.length? parsed.antonyms.slice(0,4) : null, etymology: parsed.etymology||null });
+      if (genieCache.size >= GENIE_MAX) genieCache.delete(genieCache.keys().next().value);
+      genieCache.set(gck, parsed);
       return {...parsed, model};
     } catch (e) { last = e; }
   }
@@ -285,7 +294,7 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
     explanation: 'Plainly, '+word+' is '+dd+'.',
     example: ex||'',
     memoryHook: 'Connect '+word+' to '+dd+'.',
-    deeperQuestion: '',
+    deeperQuestion: '', deeperAnswer: '', etymology: (w0 && w0.etymology) || '',
     contextNote: 'Here is the stored definition for this word.',
     synonyms: sy, antonyms: ant, model:'local-fallback'
   };
