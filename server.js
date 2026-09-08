@@ -288,7 +288,7 @@ Return valid JSON ONLY with exactly these keys: directAnswer, explanation, examp
   const ex = (w0 && w0.example) ? w0.example : '';
   const sy = (w0 && Array.isArray(w0.synonyms)) ? w0.synonyms.slice(0,3) : [];
   const ant = (w0 && Array.isArray(w0.antonyms)) ? w0.antonyms.slice(0,2) : [];
-  const dd = String(definition||'').replace(/^\s*[\-\u2014]?\s*(?:n|v|adj|adv)\.?\s*/,'').trim();
+  const dd = String(definition||'').replace(/^\s*[\-\u2014]?\s*(?:(?:adj|adv|n|v|a)\.|(?:adjective|noun|verb|adverb)\b)\s*/,'').trim();
   return {
     directAnswer: word+' means '+dd+'.',
     explanation: 'Plainly, '+word+' is '+dd+'.',
