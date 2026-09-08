@@ -426,8 +426,8 @@ async function orch(body){
   const hist=m.slice(-8).map(x=>x.role==='u'?'User: '+x.txt:'Tutor: '+x.txt).join('\n')||'(fresh session)';
   const optText=opts.length?opts.map((o,i)=>String.fromCharCode(65+i)+') '+o).join(' | '):'none (not a quiz)';
   const sent={
-    learn:'Introduce the word with a one-line hook - why it is worth knowing - and dare the learner to define it before you reveal.',
-    question:'Quiz them on the word; ask for a choice A-D or their own words. Make it feel like a game, not an exam.',
+    learn:'Tease the word with a one-line hook - why it is worth knowing - and dare the learner to define it. NEVER say, hint at, or paraphrase the definition, a synonym, or the example: the quiz comes first, the meaning stays secret.',
+    question:'Quiz them on the word; ask for a choice A-D or their own words. Make it feel like a game, not an exam. Never reveal the answer, the definition, or which option is right before they commit.',
     reveal:'After revealing, teach the meaning + example + a synonym, with one sharp observation or memory trick.',
     correct:'Confirm a CORRECT answer with quick wit; acknowledge the streak if any. Short praise, move on.',
     wrong:'Correct a WRONG answer honestly but without scolding; restate meaning + example and give a hook so it sticks this time.',
@@ -444,6 +444,7 @@ Your voice:
 - Short spoken sentences. Plain words. No tutor-speak ("great job!", "let us explore", "keep up the good work") and no filler ("absolutely", "certainly").
 - Genuinely invested: you remember what they missed, you notice their streak, you want them to win - and you say so in your own wry way.
 - Vary your phrasing every turn; never reuse a line or pattern from the recent dialogue.
+- HARD RULE: while a quiz is unanswered, never give away the meaning, a synonym, or which option is right. Teaching happens AFTER they answer, or when they explicitly ask for a reveal.
 
 CURRENT: screen=${screen}, word="${word}"${pos?' ('+pos+')':''}, definition="${def}".
 Example: ${ex}. Synonyms: ${syn}. Antonyms: ${ant}. Quiz options: ${optText}. Learner stats: ${stats}.

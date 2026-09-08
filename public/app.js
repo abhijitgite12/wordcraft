@@ -90,20 +90,23 @@ function scheduleGuide(){
 }
 // Guided tutor loop: after narrating, advance the lesson one natural step.
 function tutorGuideStep(){
-  if(!tutorLive||!VOICE.on||!VOICE.micOn)return;
-  if(guideKey===narrGuard)return; guideKey=narrGuard;
-  if(document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;
-  const c=cur(); if(!c||!c.word)return;
-  const w=c.word; const el=$('#card');
-  if(c.type==='teach' && el && !el.classList.contains('flipped') && !el.classList.contains('swiping')){
-    // introduced the word; now reveal it to teach (guide)
-    showFlip(); return;
-  }
-  if(c.type==='teach' && el && el.classList.contains('flipped')){
-    // just taught the meaning; move on to the question
-    move(1); return;
-  }
-  // test / relearn -> wait for the learner's answer
+  // Fast-learning loop: teach cards advance on their own dwell timer, and quiz
+  // cards wait for the learner - nothing to guide by hand anymore.
+}
+// Fast-learning pace: a fresh word card shows for ~2.6s, then the quiz comes to you.
+// Any learner action (tap-to-study, drag, voice) cancels the auto-advance.
+let teachTimer=null;
+function clearTeach(){ if(teachTimer){clearTimeout(teachTimer);teachTimer=null;} }
+function scheduleTeachAdvance(){
+  clearTeach();
+  teachTimer=setTimeout(()=>{
+    teachTimer=null;
+    const card=$('#card');
+    if(cur()?.type!=='teach')return;
+    if(card?.classList.contains('flipped')||card?.classList.contains('dragging')||card?.classList.contains('swiping'))return; // learner is studying it
+    if(document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;
+    move(1);
+  },2600);
 }
 function stopAllAudio(){ speakSeq++; nativeStop(); if(activeAudio){ try{activeAudio.pause(); activeAudio.src='';}catch(e){} } activeAudio=null; speakingBusy=false; activeLine=''; pending=''; }
 // ---- echo guard: is a heard phrase just our own narration coming back through the mic? ----
@@ -318,17 +321,23 @@ function answerFree(verdict, narration){
   const w=cur()?.word; if(!w)return;
   const right=correctAnswer(w);
   const opts=[...$$('.option')],rightIdx=opts.findIndex(x=>x.dataset.a===right);
-  opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
+  const item=cur(), attempts=item.attempts||0;
   let ok=false,head=null;
-  if(verdict===2){ delete wrong[w.word]; score++; bumpTutor('correct',w); ok=true; head='✓ '+(narration||'Correct.'); }
-  else if(verdict===1){ head='Close — '+(narration||'you have the right idea.'); }
-  else{ wrong[w.word]=(wrong[w.word]||0)+1; bumpTutor('wrong',w); head='✗ '+(narration||'Not quite.'); const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj}); }
+  if(verdict===2){
+    opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
+    ok=true;
+    if(attempts>0){ head='✓ Got it - this one stays in your review pile.'; }
+    else{ delete wrong[w.word]; score++; bumpTutor('correct',w); head='✓ '+(narration||'Correct.'); }
+  }
+  else if(verdict===1){ item.attempts=attempts+1; head='Close — '+(narration||'you have the right idea.'); }
+  else{ item.attempts=attempts+1; wrong[w.word]=(wrong[w.word]||0)+1; bumpTutor('wrong',w); head='✗ '+(narration||'Not quite.'); const wobj=words.find(x=>x.word===w.word);feed.splice(Math.min(feed.length,fi+4),0,{type:'relearn',word:wobj}); }
   persist();update();
-  tutorBeat(w,{correct:ok,chosenIdx:-1,rightIdx,container:$('#t-ans'),headline:head,spoken:narration||null});
+  tutorBeat(w,{correct:ok,gate:verdict!==2,chosenIdx:-1,rightIdx,container:$('#t-ans'),headline:head,spoken:narration||null});
   autoSizeCard();
 }
 // ---- handle an utterance: reflexive local first, else the agent ----
 async function handleUtterance(text){
+clearTeach();
 if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   text=String(text||'').trim(); if(!text)return;
   recordInteraction('voice',text);
@@ -426,7 +435,7 @@ function ensureAhead(count=3){while(feed.length<=fi+count){const before=feed.len
 function cur(){return feed[fi]}
 function markSeen(w){seen[w.word]=(seen[w.word]||0)+1}
 function renderReview(){const entries=Object.entries(wrong).sort((a,b)=>b[1]-a[1]);$('#header-review-count').textContent=entries.length||'';$('#review-list').innerHTML=entries.length?entries.map(([word,n])=>{const w=words.find(x=>x.word===word);return w?`<div class="word-row review-row" data-review="${esc(word)}"><b>${esc(word)}</b><span class="miss-count">missed ${n}×</span>${catTag(w)}${lvlBadge(w)}<span>${esc(displayDef(w))}</span></div>`:''}).join(''):'<p class="review-empty">No missed words yet. Keep going ✦</p>'}
-function showPage(page){document.body.classList.toggle('reviewing',page==='review');document.body.classList.toggle('browsing',page==='browse');$('#review-page').classList.toggle('active',page==='review');$('#browse-page').classList.toggle('active',page==='browse')}
+function showPage(page){clearTeach();document.body.classList.toggle('reviewing',page==='review');document.body.classList.toggle('browsing',page==='browse');$('#review-page').classList.toggle('active',page==='review');$('#browse-page').classList.toggle('active',page==='browse')}
 $('#review-link').onclick=()=>showPage('review');$('#browse-link').onclick=()=>showPage('browse');$('#back-learn').onclick=()=>showPage('learn');$('#back-browse').onclick=()=>showPage('learn');
 $('#help-button').onclick=()=>$('#help-panel').classList.add('open');$('#close-help').onclick=()=>$('#help-panel').classList.remove('open');$('#help-panel').onclick=e=>{if(e.target.id==='help-panel')$('#help-panel').classList.remove('open')};
 $('#prev-card').onclick=()=>move(-1);$('#next-card').onclick=()=>move(1);
@@ -470,9 +479,9 @@ function render(){let c=cur();if(!c||c.type==='empty'){ const level=mix==='mixed
 if(c.type==='teach'){html=teachHtml(c.word)}else if(c.type==='relearn'){html=relearnHtml(c.word)}else{html=testHtml(c.word)}$('#card').innerHTML=html;$('#card').classList.remove('flipped');
 if(!c.word.example)ensureExample(c.word);
 $('#card [data-regen]')&&($('#card [data-regen]').onclick=e=>{e.stopPropagation();regenerateExample(cur().word)});
-autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word];persist();update();move(1)};craftWord=c.word;update()}
-function showFlip(){recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
-function move(dir){let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
+autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word];persist();update();move(1)};craftWord=c.word;update();if(c.type==='teach')scheduleTeachAdvance();else clearTeach()}
+function showFlip(){clearTeach();recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
+function move(dir){clearTeach();let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip();else if(cur()?.type==='test')testReveal()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
 
@@ -523,22 +532,21 @@ function tutorBeat(w,res){
   // Spoken feedback: short and immediate, so voice users always hear the verdict.
   const spoken=res.spoken||(res.reveal ? ('The answer is option '+String((res.rightIdx??0)+1)+'. '+w.word+' means '+def+'.')
                                         : (res.correct ? (cheer+' '+w.word+' means '+def+streakLine())
-                                        : (cheer+' '+w.word+' actually means '+def+'. It\'s coming right back.')));
+                                        : (cheer+' '+w.word+' actually means '+def+(res.gate?'. Now tap the right option.':'. It\'s coming right back.'))));
   if(VOICE.on) speak(spoken,{force:true});
   // AI enrichment upgrades the why/hook slot in place (no re-render, no layout jump).
   fetchTutorNote(w,res).then(note=>{ if(tok!==beatToken||!note)return; const slot=box.querySelector('[data-tb-why]'); if(slot)slot.innerHTML=note; });
   // Auto-advance with a visible countdown on the Next button. Any learner action cancels it.
   const wait=res.correct?3600:(res.reveal?5200:5600), t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
   const tick=()=>{ if(!beatTimer)return; const left=Math.ceil((wait-(Date.now()-t0))/1000); if(cnt)cnt.textContent=left>0?('· '+left):''; if(left>0)setTimeout(tick,250); };
-  beatTimer=setTimeout(()=>advanceAfterBeat(),wait);
-  tick();
+  if(!res.gate){ beatTimer=setTimeout(()=>advanceAfterBeat(),wait); tick(); } // gate mode: advance only when the learner picks the right option
 }
 function advanceAfterBeat(){ clearBeat(); if(cur()&&cur().type==='test') move(1); }
 // Tap-to-reveal on a quiz card: highlights the right option and shows the same
 // teach-back panel as a miss, WITHOUT touching score/misses - the learner asked to see it.
 function testReveal(){
   const c=cur(); if(!c||c.type!=='test'||!c.word)return;
-  const opts=[...$$('.option')]; if(!opts.length||opts[0].classList.contains('disabled'))return; // already answered: keep the verdict
+  const opts=[...$$('.option')]; if(!opts.length||opts.every(o=>o.classList.contains('disabled')))return; // already answered/revealed: keep the verdict
   const w=c.word, right=correctAnswer(w), rightIdx=opts.findIndex(x=>x.dataset.a===right);
   recordInteraction('reveal','test reveal');
   clearBeat();
@@ -564,22 +572,33 @@ function answer(btn){
   if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;
   const opts=[...$$('.option')],rightIdx=opts.findIndex(x=>x.dataset.a===right),chosenIdx=opts.indexOf(btn);
+  const item=cur(), attempts=item.attempts||0;
   recordInteraction('answer',correct?'correct':'incorrect');
-  opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
   if(!correct){
-    btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);
+    // gate: lock only the wrong pick, teach the meaning, and WAIT for the right one
+    btn.classList.add('wrong','disabled','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);
+    item.attempts=attempts+1;
     wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);
-    const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});
+    const wobj=words.find(x=>x.word===w.word);feed.splice(Math.min(feed.length,fi+4),0,{type:'relearn',word:wobj}); // rematch a few cards later, not right away
+    persist();update();
+    tutorBeat(w,{correct:false,gate:true,chosenIdx,rightIdx,container:$('#t-ans')});
   }else{
-    score++;delete wrong[w.word];bumpTutor('correct',w);
-    btn.classList.add('locked-in');celebrate(btn,false);
+    opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
+    btn.classList.add('locked-in');
+    if(attempts>0){
+      // recovered after a miss: no score, the miss stays on the books
+      tutorBeat(w,{correct:true,chosenIdx,rightIdx,container:$('#t-ans'),headline:'Got it. This one stays in your review pile.'});
+    }else{
+      score++;delete wrong[w.word];bumpTutor('correct',w);
+      celebrate(btn,false);
+      tutorBeat(w,{correct:true,chosenIdx,rightIdx,container:$('#t-ans')});
+    }
+    persist();update();
   }
-  persist();update();
-  tutorBeat(w,{correct,chosenIdx,rightIdx,container:$('#t-ans')});
   autoSizeCard();
 }
 const CARD=$('#card');let drag=null,suppressClick=false;
-function dragStart(e){clearBeat();if(e.pointerType&&e.pointerType!=='mouse')return;if(e.button!==undefined&&e.button!==0)return;if(e.target.closest('button,.option'))return;if(CARD.classList.contains('swiping'))return;drag={id:e.pointerId||'mouse',startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastTime:performance.now(),vx:0,moved:false,axisLocked:false};CARD.setPointerCapture?.(e.pointerId);CARD.classList.add('dragging')}
+function dragStart(e){clearTeach();clearBeat();if(e.pointerType&&e.pointerType!=='mouse')return;if(e.button!==undefined&&e.button!==0)return;if(e.target.closest('button,.option'))return;if(CARD.classList.contains('swiping'))return;drag={id:e.pointerId||'mouse',startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastTime:performance.now(),vx:0,moved:false,axisLocked:false};CARD.setPointerCapture?.(e.pointerId);CARD.classList.add('dragging')}
 function dragMove(e){const id=e.pointerId??'touch';if(!drag||id!==drag.id)return;const now=performance.now(),dx=e.clientX-drag.startX,dy=e.clientY-drag.startY;if(!drag.axisLocked&&Math.hypot(dx,dy)>8){if(Math.abs(dy)>Math.abs(dx)*1.15){drag.axisLocked='vertical';return}drag.axisLocked='horizontal'}if(drag.axisLocked==='vertical')return;const dt=Math.max(1,now-drag.lastTime);drag.vx=(e.clientX-drag.lastX)/dt;drag.lastX=e.clientX;drag.lastTime=now;if(Math.abs(dx)>6)drag.moved=true;if(!drag.moved)return;const width=CARD.getBoundingClientRect().width||400,clamp=Math.max(-width*1.35,Math.min(width*1.35,dx));const resistance=Math.abs(dx)>width*.55?width*.55+(Math.abs(dx)-width*.55)*.35:Math.abs(dx);const x=Math.sign(dx)*resistance;CARD.style.transform=`translate3d(${x}px,${Math.min(18,Math.abs(x)/width*18)}px,0) rotate(${x/width*11}deg)`;const progress=Math.min(1,Math.abs(x)/(width*.55));CARD.style.setProperty('--swipe-progress',progress);$('#cardzone')?.classList.toggle('dragging-left',dx<0);$('#cardzone')?.classList.toggle('dragging-right',dx>0);$('#stack-prev')?.style.setProperty('--stack-progress',progress);$('#stack-next')?.style.setProperty('--stack-progress',progress);$('#stack-second')?.style.setProperty('--stack-progress',progress);$('#stack-third')?.style.setProperty('--stack-progress',progress);$('#stamp-next')?.classList.toggle('visible',dx<0);$('#stamp-back')?.classList.toggle('visible',dx>0);e.preventDefault()}
 function dragEnd(e){const id=e.pointerId??'touch';if(!drag||id!==drag.id)return;const d=drag,dx=e.clientX-d.startX,velocity=d.vx;drag=null;CARD.classList.remove('dragging');$('#cardzone')?.classList.remove('dragging-left','dragging-right');CARD.releasePointerCapture?.(e.pointerId);const width=CARD.getBoundingClientRect().width||400;const fling=Math.abs(dx)>width*(id==='touch'?.24:.32)||Math.abs(velocity)>(id==='touch'?.45:.65);const dir=dx<0?1:-1;if(d.moved){if(dir<0&&fi===0){suppressClick=true;setTimeout(()=>suppressClick=false,350);springCard();return}suppressClick=true;setTimeout(()=>suppressClick=false,350);if(fling){const exitX=dx<0?-width*1.25:width*1.25;CARD.style.transform=`translate3d(${exitX}px,${Math.min(70,Math.abs(dx)*.18)}px,0) rotate(${(dx<0?-1:1)*-10}deg)`;CARD.classList.add('swiping',dx<0?'exiting-left':'exiting-right');setTimeout(()=>{CARD.style.transform='';CARD.classList.remove('swiping','exiting-left','exiting-right');$('#stamp-next')?.classList.remove('visible');$('#stamp-back')?.classList.remove('visible');commitMove(dir)},260)}else springCard()}else{CARD.style.transform=''}}
 CARD.addEventListener('pointerdown',dragStart);CARD.addEventListener('pointermove',dragMove,{passive:false});CARD.addEventListener('pointerup',dragEnd);CARD.addEventListener('pointercancel',dragEnd);
