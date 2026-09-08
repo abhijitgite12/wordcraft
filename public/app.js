@@ -165,12 +165,15 @@ function stopSpeak(){ stopAllAudio(); if(guideTimer){clearTimeout(guideTimer);gu
 function localFastpath(text){
   const t=String(text||'').toLowerCase().trim(); if(!t)return null;
   if(/\b(stop|cancel|quiet|shut up)\b/.test(t))return {tool:'stop'};
-  let m=t.match(/\b(?:load|show|open|bring up|go to|teach me|study)\s+(?:the\s+)?word\s+([a-z][a-z-]{1,30})/); if(m)return {tool:'load_word',query:m[1]};
-  m=t.match(/\b(?:test|quiz)\s+me\s+(?:on|with|from)?\s*(?:the\s+)?([a-z]+)\s*(?:words|vocab|vocabulary|category)?/); if(m&&/^(gre|sat|core|academic|general|common)$/.test(m[1]))return {tool:'test_category',query:m[1]};
-  m=t.match(/\b(?:load|show|open|go to)\s+([a-z][a-z-]{2,30})\b/); if(m)return {tool:'load_word',query:m[1]};
-  return null;
   if(/\b(mute|voice off|turn off voice|silence)\b/.test(t))return {tool:'mute'};
   if(/\b(unmute|voice on|turn on voice)\b/.test(t))return {tool:'voice_on'};
+  // Navigation reflex: "next page", "next card", "move on", "skip", "go back" NEVER wait for the model.
+  if(/\b(next|skip|move on|continue|go forward|forward)\b/.test(t))return {tool:'next'};
+  if(/\b(go back|back up|previous|last card|last one|back)\b/.test(t))return {tool:'back'};
+  let m=t.match(/\b(?:load|show|open|bring up|go to|teach me|study)\s+(?:the\s+)?word\s+([a-z][a-z-]{1,30})/); if(m)return {tool:'load_word',query:m[1]};
+  m=t.match(/\b(?:test|quiz)\s+me\s+(?:on|with|from)?\s*(?:the\s+)?([a-z]+)\s*(?:words|vocab|vocabulary|category)?/); if(m&&/^(gre|sat|core|academic|general|common)$/.test(m[1]))return {tool:'test_category',query:m[1]};
+  // "load/show/go to <word>" - but never swallow a stopword as a bogus word lookup.
+  m=t.match(/\b(?:load|show|open|go to)\s+([a-z][a-z-]{2,30})\b/); if(m&&!/^(the|a|an|to|of|it|this|that|these|those|me|my|page|card|next|back)$/.test(m[1]))return {tool:'load_word',query:m[1]};
   return null;
 }
 // ---- page context for the agent ----
@@ -293,7 +296,7 @@ async function runAction(d){
     case 'repeat': speak(w?(w.word+' — '+(w.aiDefinition||w.definition||'')):(n||'Repeating.')); break;
     case 'slow': VOICE.rate=Math.max(.5,VOICE.rate-.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Slower');break;
     case 'fast': VOICE.rate=Math.min(2,VOICE.rate+.2);localStorage.setItem('wordCraftRate',VOICE.rate);speak(n||'Faster.');break;
-    case 'reveal': showFlip(); if(d.say) speak(d.say,{}); else if(!tutorLive&&w) speak(w.word+' means '+(w.aiDefinition||w.definition||'')); break;
+    case 'reveal': if(cur()?.type==='test'){ testReveal(); if(d.say)speak(d.say,{}); } else { showFlip(); if(d.say) speak(d.say,{}); else if(!tutorLive&&w) speak(w.word+' means '+(w.aiDefinition||w.definition||'')); } break;
     case 'deep_dive': if(w)openCraft(w); if(d.say)speak(d.say,{}); else if(n)speak(n); break;
     case 'options': if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'question'}); break;
     case 'help': if(n)speak(n,{}); else if(cur()?.word) orchSay({moment:'nudge'}); break;
@@ -344,7 +347,7 @@ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   const local=localFastpath(text);
   // Only safety controls bypass the orchestrator. Every learning utterance goes
   // through the page-aware agent so natural phrases can select the right tool.
-  if(local && ['stop','mute','voice_on'].includes(local.tool)){
+  if(local && ['stop','mute','voice_on','next','back'].includes(local.tool)){
     setVoiceState('listening'); return runAction({action:local.tool,index:local.option,verdict:null,query:local.query,narration:''});
   }
   if(local && ['load_word','test_category'].includes(local.tool)){
@@ -455,7 +458,7 @@ function testHtml(w){let which=(Math.random()*3|0);asked=which;let q,opts;
 if(which===0){q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}
 else if(which===1){let syn=(w.synonyms||[])[0]||null;if(!syn){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}else{q=`Pick the closest <b>SYNONYM</b> of <b>${esc(w.word)}</b>`;opts=shuffle([syn,...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(x=>x.word)])}}
 else{let ant=(w.antonyms||[])[0]||null;if(!ant){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}else{q=`Pick the <b>OPPOSITE</b> (antonym) of <b>${esc(w.word)}</b>`;opts=shuffle([ant,...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(x=>x.word)])}}
-return `<div class="test-card"><div class="card-top"><div class="test-label">⚡ QUICK TEST</div><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><p class="test-q">${q}</p><div class="options">${opts.map((x,i)=>`<button class="option" data-n="${i+1}" data-a="${esc(x)}">${esc(x)}</button>`).join('')}</div><button class="test-dive" data-dive="${w.word}">✦ Deep Dive</button><div class="tutor-beat" id="t-ans"></div></div>`}
+return `<div class="test-card"><div class="card-top"><div class="test-label">⚡ QUICK TEST</div><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><p class="test-q">${q}</p><div class="options">${opts.map((x,i)=>`<button class="option" data-n="${i+1}" data-a="${esc(x)}">${esc(x)}</button>`).join('')}</div><p class="hint" style="text-align:center;margin:8px 0 0">tap an option, or tap the card to reveal</p><button class="test-dive" data-dive="${w.word}">✦ Deep Dive</button><div class="tutor-beat" id="t-ans"></div></div>`}
 function correctAnswer(w){if(asked===0)return shortDef(w);if(asked===1)return (w.synonyms||[])[0];return (w.antonyms||[])[0]}
 function stackPreviewHtml(item){if(!item||!item.word)return '';const w=item.word;if(item.type==='test')return `<div class="stack-test"><div class="stack-preview-top"><span>⚡ QUICK TEST</span><span>→</span></div><p>Which meaning best fits <b>${esc(w.word)}</b>?</p><div class="stack-options"><i></i><i></i><i></i><i></i></div></div>`;return `<div class="stack-teach"><div class="stack-preview-top"><span>${esc(w.partOfSpeech||'WORD')}</span><span>→</span></div><strong>${esc(w.word)}</strong><small>${esc(displayDef(w))}</small></div>`}
 function renderStack(){ensureAhead(3);const previous=$('#stack-prev');if(previous)previous.innerHTML=stackPreviewHtml(feed[fi-1]);const layers=[['#stack-next',1],['#stack-second',2],['#stack-third',3]];layers.forEach(([selector,offset])=>{const el=$(selector);if(el)el.innerHTML=stackPreviewHtml(feed[fi+offset])});$('#stack-prev')?.style.setProperty('--stack-progress','0');$('#stack-next')?.style.setProperty('--stack-progress','0');$('#stack-second')?.style.setProperty('--stack-progress','0');$('#stack-third')?.style.setProperty('--stack-progress','0')}
@@ -470,7 +473,7 @@ $('#card [data-regen]')&&($('#card [data-regen]').onclick=e=>{e.stopPropagation(
 autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word];persist();update();move(1)};craftWord=c.word;update()}
 function showFlip(){recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
 function move(dir){let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
-$('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip()});
+$('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip();else if(cur()?.type==='test')testReveal()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
 
 // ===== Tutor beat: instant right/wrong feedback + teach + auto-advance =====
@@ -506,11 +509,11 @@ function tutorBeat(w,res){
   clearBeat();
   const def=displayDef(w);
   const cheer=res.correct?pickBeat(BEAT_CHEERS):pickBeat(BEAT_MISSES);
-  const defaultHead=res.correct ? (cheer+streakLine()) : (cheer+(typeof res.rightIdx==='number'&&res.rightIdx>=0?(' The answer is option '+String(res.rightIdx+1)+'.'):''));
+  const defaultHead=res.reveal ? ('The answer is option '+String((res.rightIdx??0)+1)+'.') : (res.correct ? (cheer+streakLine()) : (cheer+(typeof res.rightIdx==='number'&&res.rightIdx>=0?(' The answer is option '+String(res.rightIdx+1)+'.'):'')));
   const head=res.headline||defaultHead;
-  box.className='tutor-beat show '+(res.correct?'good':'bad');
+  box.className='tutor-beat show '+((res.correct||res.reveal)?'good':'bad');
   box.innerHTML=
-    '<div class="tb-head">'+(res.correct?'✓':'✗')+' <b>'+esc(head)+'</b></div>'+
+    '<div class="tb-head">'+(res.correct?'✓':(res.reveal?'✦':'✗'))+' <b>'+esc(head)+'</b></div>'+
     '<div class="tb-word"><b>'+esc(w.word)+'</b> <span class="tb-pos">'+esc(w.partOfSpeech||'')+'</span> · '+esc(def)+'</div>'+
     (w.example?'<div class="tb-ex">'+highlightIn(w.word,w.example)+'</div>':'')+
     '<div class="tb-why" data-tb-why></div>'+
@@ -518,18 +521,31 @@ function tutorBeat(w,res){
     '<button class="tb-next" data-tb-next>Next → <i data-tb-count></i></button></div>';
   box.querySelector('[data-tb-next]').onclick=e=>{e.stopPropagation();advanceAfterBeat()};
   // Spoken feedback: short and immediate, so voice users always hear the verdict.
-  const spoken=res.spoken||(res.correct ? (cheer+' '+w.word+' means '+def+streakLine())
-                                        : (cheer+' '+w.word+' actually means '+def+'. It\'s coming right back.'));
+  const spoken=res.spoken||(res.reveal ? ('The answer is option '+String((res.rightIdx??0)+1)+'. '+w.word+' means '+def+'.')
+                                        : (res.correct ? (cheer+' '+w.word+' means '+def+streakLine())
+                                        : (cheer+' '+w.word+' actually means '+def+'. It\'s coming right back.')));
   if(VOICE.on) speak(spoken,{force:true});
   // AI enrichment upgrades the why/hook slot in place (no re-render, no layout jump).
   fetchTutorNote(w,res).then(note=>{ if(tok!==beatToken||!note)return; const slot=box.querySelector('[data-tb-why]'); if(slot)slot.innerHTML=note; });
   // Auto-advance with a visible countdown on the Next button. Any learner action cancels it.
-  const wait=res.correct?3600:5600, t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
+  const wait=res.correct?3600:(res.reveal?5200:5600), t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
   const tick=()=>{ if(!beatTimer)return; const left=Math.ceil((wait-(Date.now()-t0))/1000); if(cnt)cnt.textContent=left>0?('· '+left):''; if(left>0)setTimeout(tick,250); };
   beatTimer=setTimeout(()=>advanceAfterBeat(),wait);
   tick();
 }
 function advanceAfterBeat(){ clearBeat(); if(cur()&&cur().type==='test') move(1); }
+// Tap-to-reveal on a quiz card: highlights the right option and shows the same
+// teach-back panel as a miss, WITHOUT touching score/misses - the learner asked to see it.
+function testReveal(){
+  const c=cur(); if(!c||c.type!=='test'||!c.word)return;
+  const opts=[...$$('.option')]; if(!opts.length||opts[0].classList.contains('disabled'))return; // already answered: keep the verdict
+  const w=c.word, right=correctAnswer(w), rightIdx=opts.findIndex(x=>x.dataset.a===right);
+  recordInteraction('reveal','test reveal');
+  clearBeat();
+  opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
+  tutorBeat(w,{correct:false,reveal:true,rightIdx,container:$('#t-ans')});
+  autoSizeCard();
+}
 // Voice answer reflex: on a quiz card, a spoken option pick NEVER waits for the model.
 // Handles "option 3", "mark option 3", "I mean mark option 3", "the third one", "c", "go with 2".
 function parseAnswerPick(t){
