@@ -148,12 +148,14 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
     if(seq!==speakSeq) return; // interrupted while fetching: never resurrect this audio
-    if(!got || Date.now()-t0>6000){ if(!activeAudio) nativeSpeak(text); return; }
+    // AI voice only: if the natural voice cannot play, the line is skipped (caption
+    // already showed it) - the computer voice never sneaks in.
+    if(!got || Date.now()-t0>9000){ finishLine(); return; }
     const url=URL.createObjectURL(got);
     const a=ttsPlayer; a.src=url; activeAudio=a;
     a.onended=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
-    a.onerror=()=>{ URL.revokeObjectURL(url); activeAudio=null; nativeSpeak(text); };
-    a.load(); a.play().catch(()=>{ URL.revokeObjectURL(url); activeAudio=null; nativeSpeak(text); });
+    a.onerror=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
+    a.load(); a.play().catch(()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); });
   } else {
     nativeSpeak(text);
   }
@@ -346,6 +348,11 @@ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
     if(apick!==null){
       const o=$$('.option')[apick];
       if(o&&!o.classList.contains('disabled')){ setVoiceState('listening'); recordInteraction('voice-answer','option '+(apick+1)); answer(o); return; }
+    }
+    const cpick=matchOptionByContent(text);
+    if(cpick!==null){
+      const o=$$('.option')[cpick];
+      if(o&&!o.classList.contains('disabled')){ setVoiceState('listening'); recordInteraction('voice-answer','option '+(cpick+1)+' by words'); answer(o); return; }
     }
   }
   const local=localFastpath(text);
@@ -549,6 +556,27 @@ function testReveal(){
   opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
   tutorBeat(w,{correct:false,reveal:true,rightIdx,container:$('#t-ans')});
   autoSizeCard();
+}
+// Voice answer by CONTENT: what the learner said is matched against the visible
+// options - exact words, word stems, or close spellings all count as a pick.
+const OPT_STOP=new Set(['a','an','the','of','to','in','on','for','or','and','at','by','is','it','as','be','that','this','with','from','one','ones','someone','something','etc','pl','often','mean','means','meaning','think','guess','say','its','it\'s']);
+function stemWord(w){ return String(w||'').replace(/ies$/,'y').replace(/(ational|ization|iveness|ments|ment|ness|ity|ing|ers|er|ed|es|ly|al|ic|s)$/,''); }
+function lev1(a,b){ if(a===b)return true; if(Math.abs(a.length-b.length)>1)return false; let i=0,j=0,edits=0; while(i<a.length&&j<b.length){ if(a[i]===b[j]){i++;j++;continue} edits++; if(edits>1)return false; if(a.length>b.length)i++; else if(b.length>a.length)j++; else{i++;j++} } return edits+(a.length-i)+(b.length-j)<=1; }
+function wordMatches(said,opt){ const s=stemWord(said),o=stemWord(opt); if(!s||!o)return false; return s===o||said===opt||(Math.min(s.length,o.length)>=4&&lev1(s,o)); }
+function matchOptionByContent(text){
+  const all=[...$$('.option')]; const opts=all.filter(o=>!o.classList.contains('disabled')); if(!opts.length)return null;
+  const said=normWords(text).filter(w=>!OPT_STOP.has(w)&&w.length>2); if(!said.length)return null;
+  let bestIdx=null,bestHits=0,bestCov=0;
+  for(const o of opts){
+    const ow=normWords(o.dataset.a||o.textContent).filter(w=>!OPT_STOP.has(w)&&w.length>2); if(!ow.length)continue;
+    const hits=ow.filter(w=>said.some(s=>wordMatches(s,w))).length; if(!hits)continue;
+    const cov=hits/ow.length;
+    if(hits>bestHits||(hits===bestHits&&cov>bestCov)){ bestIdx=all.indexOf(o); bestHits=hits; bestCov=cov; }
+  }
+  if(bestIdx===null)return null;
+  const ow=normWords(all[bestIdx].dataset.a||'').filter(w=>!OPT_STOP.has(w)&&w.length>2);
+  if(ow.length===1)return bestIdx;                  // single-word option (synonym/antonym quiz): one hit is the whole option
+  return (bestHits>=2||bestCov>=0.6)?bestIdx:null;  // phrase option: need real overlap, not one stray word
 }
 // Voice answer reflex: on a quiz card, a spoken option pick NEVER waits for the model.
 // Handles "option 3", "mark option 3", "I mean mark option 3", "the third one", "c", "go with 2".
