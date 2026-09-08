@@ -138,6 +138,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
   if(speakingBusy && force){ stopAllAudio(); }
   if(!allowRepeat && saidRecently(text)) return;
   const seq=++speakSeq;
+  const ck=cardKey(); // this line belongs to the card it was born on
   speakingBusy=true; activeLine=text;
   rememberLine(text);
   setVoiceCaption(text,true); setVoiceState('speaking');
@@ -148,11 +149,12 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
     if(seq!==speakSeq) return; // interrupted while fetching: never resurrect this audio
+    if(cardKey()!==ck){ finishLine(); return; } // card changed mid-fetch: this line is stale, never play it
     // AI voice only: if the natural voice cannot play, the line is skipped (caption
     // already showed it) - the computer voice never sneaks in.
     if(!got || Date.now()-t0>9000){ finishLine(); return; }
     const url=URL.createObjectURL(got);
-    const a=ttsPlayer; a.src=url; activeAudio=a;
+    const a=ttsPlayer; a.volume=1; a.src=url; activeAudio=a;
     a.onended=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
     a.onerror=()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); };
     a.load(); a.play().catch(()=>{ URL.revokeObjectURL(url); activeAudio=null; finishLine(); });
@@ -162,6 +164,16 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
 }
 function saidRecently(text){ const n=String(text||'').trim().toLowerCase(); const now=Date.now(); return talkMemory.some(m=>now-m.at<9000 && m.text.trim().toLowerCase()===n); }
 function stopSpeak(){ stopAllAudio(); if(guideTimer){clearTimeout(guideTimer);guideTimer=null;} }
+// On card change: end the current line like a person would - a fast natural fade,
+// never a random mid-word chop. Queued/stale lines are dropped outright.
+function softStopSpeak(){
+  if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
+  pending='';
+  speakSeq++; // any in-flight TTS fetch dies when it returns
+  const a=activeAudio; activeAudio=null; speakingBusy=false; activeLine='';
+  if(a){ try{ let v=1; const step=()=>{ v-=0.34; if(v<=0){ try{a.pause();a.src='';a.volume=1;}catch(e){} return; } a.volume=v; setTimeout(step,85); }; step(); }catch(e){ try{a.pause();a.src='';a.volume=1;}catch(_){}} }
+  else if(window.speechSynthesis && window.speechSynthesis.speaking){ nativeStop(); }
+}
 
 
 // ---- local reflexive fast-path (zero network) ----
@@ -239,6 +251,7 @@ async function orchSay(payload, w){
   if(!tutorLive&&payload&&!payload.text)return;
   const ww = w || cur()?.word; if(!ww)return;
   const tok=++orchToken;
+  const ck=cardKey();
   const body={ session:VOICE.sessionID, text:payload.text||'', moment:payload.moment||'',
     word:ww.word, definition:ww.aiDefinition||ww.definition||'', pos:ww.partOfSpeech||'',
     example:ww.example||'', synonyms:ww.synonyms||[], antonyms:ww.antonyms||[],
@@ -249,6 +262,7 @@ async function orchSay(payload, w){
     const r=await fetch('/api/orch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)return; const d=await r.json();
     if(tok!==orchToken)return; // stale (a newer narration superseded this)
+    if(cardKey()!==ck)return;   // learner moved cards while the model thought: its say and action no longer apply
     lastOrchAt=Date.now();
     if(d.say) speak(d.say, {});
     if(d.action && d.action!=='none') await runAction({action:d.action,index:d.index,verdict:d.verdict,narration:d.say||'',say:d.say||''});
@@ -365,8 +379,10 @@ if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
     setVoiceState('listening'); return runAction({action:local.tool,query:local.query,narration:'',say:''});
   }
   if(agentBusy)return; agentBusy=true;
+  const ck=cardKey();
   const d=await agentDecide(text); agentBusy=false;
   setVoiceState('listening');
+  if(cardKey()!==ck)return; // card changed while the agent thought - its decision belongs to the old card
   if(d) await runAction({action:d.action,index:d.index,verdict:d.verdict??0,query:d.query||'',narration:d.say||d.narration||'',say:d.say||''});
   else if(cur()?.word) orchSay({moment:'nudge'}); // let the orchestrator respond naturally
   // re-listening handled by state
@@ -435,6 +451,7 @@ function setCat(c){cat=c;$$('#cat-chips button').forEach(b=>b.classList.toggle('
 function ensureFeed(){while(fi>=feed.length){let w=pick();if(!w)break;feed.push({type:'teach',word:w});feed.push({type:'test',word:w})}}
 function ensureAhead(count=3){while(feed.length<=fi+count){const before=feed.length;ensureFeed();if(feed.length===before){const w=pick();if(!w)break;feed.push({type:'teach',word:w},{type:'test',word:w})}}}
 function cur(){return feed[fi]}
+function cardKey(){ const c=cur(); return fi+'|'+(c?.type||'')+'|'+(c?.word?.word||''); }
 function markSeen(w){seen[w.word]=(seen[w.word]||0)+1}
 function renderReview(){const entries=Object.entries(wrong).sort((a,b)=>b[1]-a[1]);$('#header-review-count').textContent=entries.length||'';$('#review-list').innerHTML=entries.length?entries.map(([word,n])=>{const w=words.find(x=>x.word===word);return w?`<div class="word-row review-row" data-review="${esc(word)}"><b>${esc(word)}</b><span class="miss-count">missed ${n}×</span>${catTag(w)}${lvlBadge(w)}<span>${esc(displayDef(w))}</span></div>`:''}).join(''):'<p class="review-empty">No missed words yet. Keep going ✦</p>'}
 function showPage(page){clearTeach();document.body.classList.toggle('reviewing',page==='review');document.body.classList.toggle('browsing',page==='browse');$('#review-page').classList.toggle('active',page==='review');$('#browse-page').classList.toggle('active',page==='browse')}
@@ -466,14 +483,37 @@ function shortDef(w){let s=displayDef(w);return s.length>145?s.slice(0,142).repl
 function teachHtml(w){return `<div class="face front"><div class="card-top"><span class="pos">${esc(w.partOfSpeech)}</span><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><h1>${esc(w.word)}</h1><p class="hint">Think of the meaning… tap to reveal</p></div><div class="face back"><div class="card-top"><span class="pos">${esc(w.partOfSpeech)}</span><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><h2>${esc(w.word)}</h2><p class="definition">${esc(displayDef(w))}</p>${exampleHtml(w)}${relationsHtml(w)}<button class="dive-main" data-dive="${w.word}">✦ Deep Dive</button></div>`}
 function relearnHtml(w){return `<div class="relearn-card"><div class="relearn-label">↻ RELEARN — you missed this one</div><div class="card-top"><span class="pos">${esc(w.partOfSpeech)}</span><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><h2>${esc(w.word)}</h2><p class="definition">${esc(displayDef(w))}</p>${exampleHtml(w)}${relationsHtml(w)}<div class="relearn-actions"><button class="dive-main" data-dive="${w.word}">✦ Deep Dive</button><button class="micro got" id="retry-btn">✓ Got it now</button></div><p class="relearn-hint">or swipe ↓ to review again</p></div>`}
 function testHtml(w){let which=(Math.random()*3|0);asked=which;let q,opts;
-if(which===0){q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}
-else if(which===1){let syn=(w.synonyms||[])[0]||null;if(!syn){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}else{q=`Pick the closest <b>SYNONYM</b> of <b>${esc(w.word)}</b>`;opts=shuffle([syn,...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(x=>x.word)])}}
-else{let ant=(w.antonyms||[])[0]||null;if(!ant){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([shortDef(w),...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(shortDef)])}else{q=`Pick the <b>OPPOSITE</b> (antonym) of <b>${esc(w.word)}</b>`;opts=shuffle([ant,...shuffle(words.filter(x=>x.word!==w.word)).slice(0,3).map(x=>x.word)])}}
+const rightDef=()=>deleak(shortDef(w),w.word);
+const distractors=(map)=>{const out=[];for(const x of shuffle(words.filter(x=>x.word!==w.word))){const t=map(x);if(t&&!leaksWord(t,w.word))out.push(t);if(out.length>=3)break}return out};
+if(which===0){q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([rightDef(),...distractors(shortDef)])}
+else if(which===1){let syn=(w.synonyms||[])[0]||null;if(!syn||leaksWord(syn,w.word)){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([rightDef(),...distractors(shortDef)])}else{q=`Pick the closest <b>SYNONYM</b> of <b>${esc(w.word)}</b>`;opts=shuffle([syn,...distractors(x=>x.word)])}}
+else{let ant=(w.antonyms||[])[0]||null;if(!ant||leaksWord(ant,w.word)){asked=0;q=`Which meaning best fits <b>${esc(w.word)}</b>?`;opts=shuffle([rightDef(),...distractors(shortDef)])}else{q=`Pick the <b>OPPOSITE</b> (antonym) of <b>${esc(w.word)}</b>`;opts=shuffle([ant,...distractors(x=>x.word)])}}
 return `<div class="test-card"><div class="card-top"><div class="test-label">⚡ QUICK TEST</div><span class="top-tags">${catTag(w)}${lvlBadge(w)}</span></div><p class="test-q">${q}</p><div class="options">${opts.map((x,i)=>`<button class="option" data-n="${i+1}" data-a="${esc(x)}">${esc(x)}</button>`).join('')}</div><p class="hint" style="text-align:center;margin:8px 0 0">tap an option, or tap the card to reveal</p><button class="test-dive" data-dive="${w.word}">✦ Deep Dive</button><div class="tutor-beat" id="t-ans"></div></div>`}
-function correctAnswer(w){if(asked===0)return shortDef(w);if(asked===1)return (w.synonyms||[])[0];return (w.antonyms||[])[0]}
+function correctAnswer(w){if(asked===0)return deleak(shortDef(w),w.word);if(asked===1)return (w.synonyms||[])[0];return (w.antonyms||[])[0]}
+// Answer-leak guard: an option must never contain the target word or a form of it.
+function leaksWord(text, word){
+  const w=String(word||'').toLowerCase(); if(!w)return false;
+  const fs=[w, w+'s', w+'es', w+'ed', w+'ing', w+'ly', w+'ness', w+'ity', w+'tion', w+'er', w+'ers', w+'ist', w+'ism'];
+  if(w.endsWith('e'))fs.push(w.slice(0,-1)+'ing', w.slice(0,-1)+'ed', w.slice(0,-1)+'er', w.slice(0,-1)+'est');
+  if(w.endsWith('y')&&w.length>2)fs.push(w.slice(0,-1)+'ily', w.slice(0,-1)+'iness', w.slice(0,-1)+'ies', w.slice(0,-1)+'ied', w.slice(0,-1)+'ier', w.slice(0,-1)+'iest');
+  const t=' '+String(text||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ')+' ';
+  return fs.some(f=>t.includes(' '+f+' '));
+}
+// Last-resort deleak for the CORRECT option when data still leaks: rewrite the
+// common self-reference patterns, never leaving the word visible.
+function deleak(text, word){
+  let s=String(text||''); const w=String(word||'').toLowerCase(); if(!w||!leaksWord(s,w))return s;
+  const W=w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  s=s.replace(new RegExp('^A '+W+'\\w* (?:person|one|individual)\\s+', 'i'), 'A person ');
+  s=s.replace(new RegExp('^(?:A|An|The)?\\s*'+W+'\\w*\\s+(?:is|means|describes|refers to)\\s+', 'i'), '');
+  s=s.replace(new RegExp('^Someone who is '+W+'\\w*\\s+', 'i'), 'Someone ');
+  s=s.replace(new RegExp('^Something that is '+W+'\\w*\\s+', 'i'), 'Something ');
+  s=s.replace(new RegExp('\\b'+W+'\\w*\\b', 'gi'), 'this');
+  return s.charAt(0).toUpperCase()+s.slice(1);
+}
 function stackPreviewHtml(item){if(!item||!item.word)return '';const w=item.word;if(item.type==='test')return `<div class="stack-test"><div class="stack-preview-top"><span>⚡ QUICK TEST</span><span>→</span></div><p>Which meaning best fits <b>${esc(w.word)}</b>?</p><div class="stack-options"><i></i><i></i><i></i><i></i></div></div>`;return `<div class="stack-teach"><div class="stack-preview-top"><span>${esc(w.partOfSpeech||'WORD')}</span><span>→</span></div><strong>${esc(w.word)}</strong><small>${esc(displayDef(w))}</small></div>`}
 function renderStack(){ensureAhead(3);const previous=$('#stack-prev');if(previous)previous.innerHTML=stackPreviewHtml(feed[fi-1]);const layers=[['#stack-next',1],['#stack-second',2],['#stack-third',3]];layers.forEach(([selector,offset])=>{const el=$(selector);if(el)el.innerHTML=stackPreviewHtml(feed[fi+offset])});$('#stack-prev')?.style.setProperty('--stack-progress','0');$('#stack-next')?.style.setProperty('--stack-progress','0');$('#stack-second')?.style.setProperty('--stack-progress','0');$('#stack-third')?.style.setProperty('--stack-progress','0')}
-function commitMove(dir){clearBeat();if(dir<0&&fi===0)return;if(dir>0){fi++;ensureFeed()}else fi=Math.max(0,fi-1);recordInteraction('navigation',dir>0?'next':'back');render()}
+function commitMove(dir){clearBeat();softStopSpeak();if(dir<0&&fi===0)return;if(dir>0){fi++;ensureFeed()}else fi=Math.max(0,fi-1);recordInteraction('navigation',dir>0?'next':'back');render()}
 function springCard(){CARD.classList.add('spring-back');CARD.style.transform='';$('#cardzone')?.classList.remove('dragging-left','dragging-right');$('#stack-prev')?.style.setProperty('--stack-progress','0');$('#stack-next')?.style.setProperty('--stack-progress','0');$('#stack-second')?.style.setProperty('--stack-progress','0');$('#stack-third')?.style.setProperty('--stack-progress','0');setTimeout(()=>CARD.classList.remove('spring-back'),430)}
 function syncWordUrl(word){if(!word||document.body.classList.contains('reviewing')||document.body.classList.contains('browsing'))return;const u=new URL(location.href);u.search='';u.searchParams.set('w',word.word);history.replaceState(null,'',u)}
 function autoSizeCard(){const zone=$('#cardzone'),c=$('#card');if(!zone||!c)return;let need=0;c.querySelectorAll('.face,.test-card,.relearn-card,.empty-card').forEach(f=>{f.style.height='100%';need=Math.max(need,f.scrollHeight)});need=Math.max(340,Math.min(700,need));zone.style.height=need+'px'}
@@ -483,7 +523,7 @@ if(!c.word.example)ensureExample(c.word);
 $('#card [data-regen]')&&($('#card [data-regen]').onclick=e=>{e.stopPropagation();regenerateExample(cur().word)});
 autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word.word];persist();update();move(1)};craftWord=c.word;update();if(c.type==='teach')scheduleTeachAdvance();else clearTeach()}
 function showFlip(){clearTeach();recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
-function move(dir){clearTeach();let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
+function move(dir){clearTeach();softStopSpeak();let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip();else if(cur()?.type==='test')testReveal()});
 function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;const box=document.createElement('div');box.className='confetti';const r=origin?.getBoundingClientRect?.();box.style.left=(r?r.left+r.width/2:innerWidth/2)+'px';box.style.top=(r?r.top+r.height/2:innerHeight/2)+'px';for(let i=0;i<(big?24:12);i++){const p=document.createElement('i');p.style.setProperty('--x',(Math.random()*130-65)+'px');p.style.setProperty('--y',(Math.random()*90+35)+'px');p.style.setProperty('--r',(Math.random()*360)+'deg');p.style.setProperty('--d',(Math.random()*.2)+'s');p.style.background=['#6555d8','#ff785f','#2f9e62','#e8a13a','#7654c7'][i%5];box.appendChild(p)}document.body.appendChild(box);setTimeout(()=>box.remove(),1100)}
 
@@ -492,7 +532,7 @@ function celebrate(origin,big=false){if(window.matchMedia&&window.matchMedia('(p
 // spoken line plays immediately, and an AI note (when the brain is reachable)
 // upgrades the "why / hook" slot in place. The loop NEVER depends on the network.
 let beatTimer=null, beatToken=0;
-function clearBeat(){ if(beatTimer){clearTimeout(beatTimer);beatTimer=null;} }
+function clearBeat(){ if(beatTimer){clearTimeout(beatTimer);clearInterval(beatTimer);beatTimer=null;} }
 const BEAT_CHEERS=['Nailed it.','Sharp.','Exactly right.','Clean hit.','That\'s the one.','Too easy for you.','Knew you had it.'];
 const BEAT_MISSES=['Not quite.','Close, but no.','That one slipped.','Good swing, wrong ball.'];
 const pickBeat=a=>a[Math.random()*a.length|0];
@@ -540,9 +580,13 @@ function tutorBeat(w,res){
   fetchTutorNote(w,res).then(note=>{ if(tok!==beatToken||!note)return; const slot=box.querySelector('[data-tb-why]'); if(slot)slot.innerHTML=note; });
   // Auto-advance with a visible countdown on the Next button. Any learner action cancels it.
   const wait=res.correct?3600:(res.reveal?5200:3000), t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
-  const tick=()=>{ if(!beatTimer)return; const left=Math.ceil((wait-(Date.now()-t0))/1000); if(cnt)cnt.textContent=left>0?('· '+left):''; if(left>0)setTimeout(tick,250); };
-  beatTimer=setTimeout(()=>advanceAfterBeat(),wait);
-  tick();
+  // self-correcting: countdown and advance are computed from t0 every tick, so
+  // setTimeout drift can never desync the label from the actual advance
+  beatTimer=setInterval(()=>{
+    const el=Date.now()-t0, left=Math.ceil((wait-el)/1000);
+    if(cnt)cnt.textContent=left>0?('· '+left):'';
+    if(el>=wait){ clearInterval(beatTimer); beatTimer=null; advanceAfterBeat(); }
+  },250);
 }
 function advanceAfterBeat(){ clearBeat(); if(cur()&&cur().type==='test') move(1); }
 // Tap-to-reveal on a quiz card: highlights the right option and shows the same

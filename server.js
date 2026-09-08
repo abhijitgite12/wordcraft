@@ -171,8 +171,11 @@ function send(res, status, data, type='application/json') {
 const { execFileSync, execFile } = require('child_process');
 const cacheDir = path.join(ROOT, '.tts');
 let ttsReady = false;
+let ttsLastCheck = 0;
 try{ fs.mkdirSync(cacheDir,{recursive:true}); ttsReady = checkTTS(); }catch(e){}
-function checkTTS(){ try{ execFileSync('python3',['-c','import edge_tts'],{timeout:3000,stdio:'pipe'}); return true; }catch(e){ return false; } }
+function checkTTS(){ try{ execFileSync('python3',['-c','import edge_tts'],{timeout:8000,stdio:'pipe'}); return true; }catch(e){ console.log('[tts] edge-tts check failed:', e && e.message); return false; } }
+// Lazy recovery: re-probe on demand - a slow cold boot at instance start must not 501 every request for the instance's life.
+function ensureTTS(){ if(!ttsReady && Date.now()-ttsLastCheck>30000){ ttsLastCheck=Date.now(); try{ ttsReady=checkTTS(); }catch(e){} if(ttsReady)console.log('[tts] edge-tts recovered'); } return ttsReady; }
 // in-memory audio cache (text+voice -> base64), bounded
 const ttsCache = new Map(); const TTS_MAX = 400;
 const VOICES = process.env.TTS_VOICE || 'en-US-AriaNeural';
@@ -653,7 +656,7 @@ const server=http.createServer((req,res)=>{
         const {text='', voice='', rate=1}=JSON.parse(raw||'{}');
         const t=String(text).trim().slice(0,500);
         if(!t) return send(res,400,{error:'text required'});
-        if(!ttsReady) return send(res,501,{error:'TTS unavailable'});
+        if(!ensureTTS()) return send(res,501,{error:'TTS unavailable'});
         if(!rateOk(ip)) return send(res,429,{error:'Too many requests. Take a short break ✨'});
         const r=await tts(t, voice, rate);
         send(res,200,{audio:bufToBase64(r.buf), key:r.key, cached:r.cached, voice:r.voice||''});
