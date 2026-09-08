@@ -127,8 +127,8 @@ function looksLikeEcho(heard){
   return false;
 }
 // Main speak: serialized (never talks over itself), dedup'd, human voice preferred.
-async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=false}={}){
-  if(!VOICE.on||!text)return;
+async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=false,ignoreMute=false}={}){
+  if((!VOICE.on&&!ignoreMute)||!text)return;
   text=String(text).trim(); if(!text)return;
   if(speakingBusy && !force){
     // if we're already saying this exact thing, ignore; else queue for after.
@@ -149,6 +149,7 @@ async function speak(text,{force=false,human=true,allowRepeat=false,forceHuman=f
     try{ got=await fetchTTS(text); }catch(e){}
     ttsFetching=false;
     if(seq!==speakSeq) return; // interrupted while fetching: never resurrect this audio
+    if(!VOICE.on&&!ignoreMute){ finishLine(); return; } // muted while the line was being fetched: never play it
     if(cardKey()!==ck){ finishLine(); return; } // card changed mid-fetch: this line is stale, never play it
     // AI voice only: if the natural voice cannot play, the line is skipped (caption
     // already showed it) - the computer voice never sneaks in.
@@ -420,8 +421,10 @@ function startListening(){
 }
 function toggleMic(on){
   on=(on===undefined)?!VOICE.micOn:on;
-  VOICE.micOn=!!on;
   orchToken++;            // invalidate any tutor narration already in flight
+  // The voice button is the GLOBAL voice switch: off means the app says nothing at all.
+  VOICE.on=!!on; try{localStorage.setItem('wordCraftVoiceOn',on?'on':'off');}catch(e){}
+  VOICE.micOn=!!on;
   if(!on){ stopSpeak(); } // silence immediately when voice is turned off
   setTutorLive(on&&VOICE.on);
   if(on && VOICE.on){ setVoiceState('listening'); startListening(); sayOnCardChange(); }
@@ -433,7 +436,7 @@ function initVoiceUI(){
   if(btn)btn.onclick=toggle; if(pill)pill.onclick=toggle;
   const vq=$('#vq-toggle'); if(vq){ vq.checked=humanVoice.on; vq.onchange=e=>{ humanVoice.on=vq.checked; try{localStorage.setItem('wordCraftHuman',humanVoice.on?'on':'off');}catch(e){} }; }
   const vs=$('#voice-sel'); if(vs){ vs.value=voiceSel; fetch('/api/voices').then(r=>r.ok?r.json():null).then(d=>{ if(!vs)return; if(d&&d.voices&&d.voices.length){ vs.innerHTML=d.voices.map(v=>'<option value="'+v+'">'+friendlyVoice(v)+'</option>').join(''); if(!d.voices.includes(voiceSel)){ voiceSel=d.voices[0]; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} } } vs.value=voiceSel; }).catch(()=>{}); vs.onchange=async e=>{ voiceSel=vs.value; _nativeVoice=null; try{localStorage.setItem('wordCraftVoiceSel',voiceSel);}catch(err){} // choosing a voice = use natural/Edge provider (that's where distinct voices live) so you hear it immediately
- humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hey - this is '+voiceSel.replace(/^en-US-/,'').replace(/MultilingualNeural$/,'').replace(/Neural$/,'')+'. Keep this one?',{human:true,allowRepeat:true,force:true,forceHuman:true}); }; }
+ humanVoice.on=true; const vq2=$('#vq-toggle'); if(vq2)vq2.checked=true; try{localStorage.setItem('wordCraftHuman','on');}catch(err){} speak('Hey - this is '+voiceSel.replace(/^en-US-/,'').replace(/MultilingualNeural$/,'').replace(/Neural$/,'')+'. Keep this one?',{human:true,allowRepeat:true,force:true,forceHuman:true,ignoreMute:true}); }; }
   const input=$('#voice-input'); const form=$('#voice-form');
   if(form)form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){ if(speakingBusy)stopSpeak(); handleUtterance(v); input.value='';}};
   setVoiceState('off');
