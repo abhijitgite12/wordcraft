@@ -321,18 +321,13 @@ function answerFree(verdict, narration){
   const w=cur()?.word; if(!w)return;
   const right=correctAnswer(w);
   const opts=[...$$('.option')],rightIdx=opts.findIndex(x=>x.dataset.a===right);
-  const item=cur(), attempts=item.attempts||0;
+  opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
   let ok=false,head=null;
-  if(verdict===2){
-    opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
-    ok=true;
-    if(attempts>0){ head='✓ Got it - this one stays in your review pile.'; }
-    else{ delete wrong[w.word]; score++; bumpTutor('correct',w); head='✓ '+(narration||'Correct.'); }
-  }
-  else if(verdict===1){ item.attempts=attempts+1; head='Close — '+(narration||'you have the right idea.'); }
-  else{ item.attempts=attempts+1; wrong[w.word]=(wrong[w.word]||0)+1; bumpTutor('wrong',w); head='✗ '+(narration||'Not quite.'); const wobj=words.find(x=>x.word===w.word);feed.splice(Math.min(feed.length,fi+4),0,{type:'relearn',word:wobj}); }
+  if(verdict===2){ delete wrong[w.word]; score++; bumpTutor('correct',w); ok=true; head='✓ '+(narration||'Correct.'); }
+  else if(verdict===1){ head='Close — '+(narration||'you have the right idea.'); }
+  else{ wrong[w.word]=(wrong[w.word]||0)+1; bumpTutor('wrong',w); head='✗ '+(narration||'Not quite.'); const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj}); }
   persist();update();
-  tutorBeat(w,{correct:ok,gate:verdict!==2,chosenIdx:-1,rightIdx,container:$('#t-ans'),headline:head,spoken:narration||null});
+  tutorBeat(w,{correct:ok,chosenIdx:-1,rightIdx,container:$('#t-ans'),headline:head,spoken:narration||null});
   autoSizeCard();
 }
 // ---- handle an utterance: reflexive local first, else the agent ----
@@ -479,7 +474,7 @@ function render(){let c=cur();if(!c||c.type==='empty'){ const level=mix==='mixed
 if(c.type==='teach'){html=teachHtml(c.word)}else if(c.type==='relearn'){html=relearnHtml(c.word)}else{html=testHtml(c.word)}$('#card').innerHTML=html;$('#card').classList.remove('flipped');
 if(!c.word.example)ensureExample(c.word);
 $('#card [data-regen]')&&($('#card [data-regen]').onclick=e=>{e.stopPropagation();regenerateExample(cur().word)});
-autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word];persist();update();move(1)};craftWord=c.word;update();if(c.type==='teach')scheduleTeachAdvance();else clearTeach()}
+autoSizeCard();$('#gesture').innerHTML=c.type==='test'?'swipe <b>left</b> · next word &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; tap, press <b>1-4</b>, or say <b>option 2</b>':(c.type==='relearn'?'swipe <b>left</b> · continue &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> Deep Dive':'swipe <b>left</b> · next &nbsp;|&nbsp; <b>right</b> · back &nbsp;|&nbsp; <b>tap</b> · reveal');let rb=$('#retry-btn');if(rb)rb.onclick=()=>{delete wrong[c.word.word];persist();update();move(1)};craftWord=c.word;update();if(c.type==='teach')scheduleTeachAdvance();else clearTeach()}
 function showFlip(){clearTeach();recordInteraction('reveal','card flip');let c=$('#card');if(c.querySelector('.face')&&!c.classList.contains('flipped')&&!c.classList.contains('dragging')&&!c.classList.contains('swiping')){c.style.transform='';c.classList.add('flipping');requestAnimationFrame(()=>{c.classList.add('flipped');setTimeout(()=>c.classList.remove('flipping'),620)});if(tutorLive)narrate('reveal')}}
 function move(dir){clearTeach();let c=$('#card');if(c.classList.contains('swiping'))return;if(dir<0&&fi===0){springCard();return}c.classList.add('swiping',dir>0?'moving-left':'moving-right');setTimeout(()=>{c.classList.remove('swiping','moving-left','moving-right');commitMove(dir);sayOnCardChange()},340)}
 $('#card').addEventListener('click',e=>{if(suppressClick)return;let d=e.target.closest('[data-dive]');if(d){openCraft(words.find(w=>w.word===d.dataset.dive));return}let opt=e.target.closest('.option');if(opt&&!opt.classList.contains('disabled')){answer(opt);return}if($('#card').querySelector('.face'))showFlip();else if(cur()?.type==='test')testReveal()});
@@ -532,14 +527,15 @@ function tutorBeat(w,res){
   // Spoken feedback: short and immediate, so voice users always hear the verdict.
   const spoken=res.spoken||(res.reveal ? ('The answer is option '+String((res.rightIdx??0)+1)+'. '+w.word+' means '+def+'.')
                                         : (res.correct ? (cheer+' '+w.word+' means '+def+streakLine())
-                                        : (cheer+' '+w.word+' actually means '+def+(res.gate?'. Now tap the right option.':'. It\'s coming right back.'))));
+                                        : (cheer+' '+w.word+' actually means '+def+'. Let\'s learn it properly.')));
   if(VOICE.on) speak(spoken,{force:true});
   // AI enrichment upgrades the why/hook slot in place (no re-render, no layout jump).
   fetchTutorNote(w,res).then(note=>{ if(tok!==beatToken||!note)return; const slot=box.querySelector('[data-tb-why]'); if(slot)slot.innerHTML=note; });
   // Auto-advance with a visible countdown on the Next button. Any learner action cancels it.
-  const wait=res.correct?3600:(res.reveal?5200:5600), t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
+  const wait=res.correct?3600:(res.reveal?5200:3000), t0=Date.now(), cnt=box.querySelector('[data-tb-count]');
   const tick=()=>{ if(!beatTimer)return; const left=Math.ceil((wait-(Date.now()-t0))/1000); if(cnt)cnt.textContent=left>0?('· '+left):''; if(left>0)setTimeout(tick,250); };
-  if(!res.gate){ beatTimer=setTimeout(()=>advanceAfterBeat(),wait); tick(); } // gate mode: advance only when the learner picks the right option
+  beatTimer=setTimeout(()=>advanceAfterBeat(),wait);
+  tick();
 }
 function advanceAfterBeat(){ clearBeat(); if(cur()&&cur().type==='test') move(1); }
 // Tap-to-reveal on a quiz card: highlights the right option and shows the same
@@ -572,29 +568,19 @@ function answer(btn){
   if(guideTimer){clearTimeout(guideTimer);guideTimer=null;}
   let w=cur().word,right=correctAnswer(w),correct=btn.dataset.a===right;
   const opts=[...$$('.option')],rightIdx=opts.findIndex(x=>x.dataset.a===right),chosenIdx=opts.indexOf(btn);
-  const item=cur(), attempts=item.attempts||0;
   recordInteraction('answer',correct?'correct':'incorrect');
+  opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
   if(!correct){
-    // gate: lock only the wrong pick, teach the meaning, and WAIT for the right one
-    btn.classList.add('wrong','disabled','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);
-    item.attempts=attempts+1;
+    // flash the verdict, then carry the learner to the relearn/learn page for THIS word
+    btn.classList.add('wrong','learning-miss');setTimeout(()=>btn.classList.remove('learning-miss'),550);
     wrong[w.word]=(wrong[w.word]||0)+1;bumpTutor('wrong',w);
-    const wobj=words.find(x=>x.word===w.word);feed.splice(Math.min(feed.length,fi+4),0,{type:'relearn',word:wobj}); // rematch a few cards later, not right away
-    persist();update();
-    tutorBeat(w,{correct:false,gate:true,chosenIdx,rightIdx,container:$('#t-ans')});
+    const wobj=words.find(x=>x.word===w.word);feed.splice(fi+1,0,{type:'relearn',word:wobj});
   }else{
-    opts.forEach(x=>{x.classList.add('disabled');if(x.dataset.a===right)x.classList.add('correct')});
-    btn.classList.add('locked-in');
-    if(attempts>0){
-      // recovered after a miss: no score, the miss stays on the books
-      tutorBeat(w,{correct:true,chosenIdx,rightIdx,container:$('#t-ans'),headline:'Got it. This one stays in your review pile.'});
-    }else{
-      score++;delete wrong[w.word];bumpTutor('correct',w);
-      celebrate(btn,false);
-      tutorBeat(w,{correct:true,chosenIdx,rightIdx,container:$('#t-ans')});
-    }
-    persist();update();
+    score++;delete wrong[w.word];bumpTutor('correct',w);
+    btn.classList.add('locked-in');celebrate(btn,false);
   }
+  persist();update();
+  tutorBeat(w,{correct,chosenIdx,rightIdx,container:$('#t-ans')});
   autoSizeCard();
 }
 const CARD=$('#card');let drag=null,suppressClick=false;
